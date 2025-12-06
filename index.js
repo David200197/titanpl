@@ -200,7 +200,8 @@ function startProd() {
 // TITAN UPDATE — Upgrade titan/ runtime
 // ------------------------------------------
 function updateTitan() {
-    const projectTitan = path.join(process.cwd(), "titan");
+    const projectRoot = process.cwd();
+    const projectTitan = path.join(projectRoot, "titan");
     const cliTitan = path.join(__dirname, "templates", "titan");
 
     if (!fs.existsSync(projectTitan)) {
@@ -211,24 +212,28 @@ function updateTitan() {
 
     console.log(cyan("Titan: Updating runtime files..."));
 
-    // Backup old titan folder
-    const backupDir = path.join(process.cwd(), `titan_backup_${Date.now()}`);
+    const backupDir = path.join(projectRoot, `titan_backup_${Date.now()}`);
     fs.renameSync(projectTitan, backupDir);
-
     console.log(green(`✔ Backup created → ${backupDir}`));
 
     copyDir(cliTitan, projectTitan);
 
-    [".gitignore", ".dockerignore", "Dockerfile"].forEach((file) => {
-        const src = path.join(templateDir, file);
-        const dest = path.join(target, file);
-        if (fs.existsSync(src)) fs.copyFileSync(src, dest);
-    });
+    const projectTemplateRoot = path.join(__dirname, "templates");
 
+    [".gitignore", ".dockerignore", "Dockerfile"].forEach((file) => {
+        const src = path.join(projectTemplateRoot, file);
+        const dest = path.join(projectRoot, file);
+
+        if (fs.existsSync(src)) {
+            fs.copyFileSync(src, dest);
+            console.log(green(`✔ Updated ${file}`));
+        }
+    });
 
     console.log(green("✔ Titan runtime updated successfully!"));
     console.log(cyan("Your project now has the latest Titan features."));
 }
+
 
 
 // ROUTER
