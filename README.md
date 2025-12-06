@@ -1,44 +1,65 @@
-
 ***
 
-## TITAN 🚀
+## TITAN PLANET 🚀  
 JavaScript Simplicity. Rust Power.
 
-Titan is a JavaScript-first backend framework that compiles your JS routes and actions into a production-grade Rust + Axum server.
+Titan is a JavaScript-first backend framework that compiles your JS routes and actions into a production-grade **Rust + Axum native server**.
 
-Developers write zero Rust, yet deploy a native Rust backend with extreme performance, safety, and scalability.
+Developers write **zero Rust**, yet deploy a high-performance, safe, fully native backend with excellent DX (developer experience).
 
-Titan turns your JavaScript backend into:
+Titan = Next.js DX × Rust performance × JavaScript simplicity
 
-- A Rust Axum HTTP server  
-- A JS action execution runtime (via Boa)  
-- A standalone binary ready for Railway, Fly.io, VPS, Docker  
-- A fully portable server with no Node.js required in production  
+---
 
-Titan = Next.js DX × Rust performance × JS developer simplicity
+## ⚙ Requirements
 
-### Features
+Before using Titan, ensure your system has:
 
-- Write backend logic in JavaScript  
-- Compile into native Rust backend  
-- Titan DSL (t.post(), t.start())  
-- Automatic route generation  
-- Automatic JS action bundling  
-- Rust Axum server runtime  
-- JavaScript execution via Boa (sandboxed)  
-- Hot-reload dev server   // development in progress
-- Production binary output  
+### **1. Rust (latest stable)**
+Install from:
+https://rust-lang.org/tools/install/
+
+### **2. Node.js (v18+)**
+Required for:
+- Titan CLI  
+- esbuild  
+- JS → Rust compilation process  
+
+Check version:
+```bash
+node -v
+npm -v
+rustc -V
+```
+
+---
+
+## ✨ Features
+
+- Write your backend in **pure JavaScript**
+- Compile into a **native Rust HTTP server**
+- Titan DSL: `t.get()`, `t.post()`, `t.start()`
+- Automatic **route generation**
+- Automatic **JS action bundling**
+- Fast **Rust Axum runtime**
+- JavaScript execution via **Boa engine**
+- **Hot Reload Dev Server** (edit → rebuild → restart automatically)
+- Production output: **single binary**
 - Zero-config deployment
 
-### Installation
+---
+
+## 📦 Installation
 
 Install the Titan CLI globally:
 
 ```bash
-npm install -g titan-cli
+npm install -g @ezetgalaxy/titan
 ```
 
-### Create a New Titan Project
+---
+
+## 🚀 Create a New Titan Project
 
 ```bash
 tit init my-app
@@ -46,62 +67,66 @@ cd my-app
 tit dev
 ```
 
-This will:
+Titan will automatically:
 
-- Generate Titan project structure  
-- Build routes from /app/app.js  
-- Bundle JS actions into [.jsbundle] files  
-- Start the Rust Axum development server with hot reload
+- Create project structure  
+- Generate routes from `/app/app.js`  
+- Bundle JS actions into `.jsbundle` files  
+- Start the **Rust Axum dev server with Hot Reload**  
 
-### Project Structure
+---
+
+# 📁 Project Structure
 
 ```
 my-app/
 ├── app/
-│   ├── app.js
-│   └── actions/
-│       └── hello.js
+│   ├── app.js                 # Titan routes (DSL)
+│   └── actions/
+│       └── hello.js           # Titan action
 │
 ├── titan/
-│   |── titan.js
-|   |__ bundle.js
+│   ├── titan.js               # Titan DSL
+│   ├── bundle.js              # Bundler (esbuild)
+│   └── dev.js                 # Hot reload engine
 │
-├── cli/
-│   └── bundle.js
-│
-├── server/            ← Rust backend ([translate:auto generated])
-│   ├── src/
-│   ├── actions/
-│   ├── titan/
-│   ├── target/
-│   ├── routes.json
-│   ├── action_map.json
-│   └── titan-server   ← final binary
+├── server/                    # Rust backend (auto generated)
+│   ├── src/
+│   ├── actions/               # JS → .jsbundle compiled actions
+│   ├── titan/                 # internal runtime files
+│   ├── target/                # Cargo build output
+│   ├── routes.json
+│   ├── action_map.json
+│   └── titan-server           # Final Rust binary
 │
 └── package.json
 ```
 
-### Example: Titan Action
+This is the complete Titan architecture:  
+**JS input → Rust server output → Native production binary.**
+
+---
+
+# 🧩 Example: Titan Action
 
 **app/actions/hello.js**
 
 ```js
 function hello(req) {
-  return { message: "Hello from Titan!" };
+  return { message: "Hello from Titan!" };
 }
 
-globalThis.hello = hello
+globalThis.hello = hello;
 ```
 
-This registers a global function _hello_ for the Rust runtime.
+---
 
-### Example: Titan Routes
+# 🛣 Example: Titan Routes (DSL)
 
 **app/app.js**
 
 ```js
 import t from "../titan/titan.js";
-
 
 // POST /hello → hello action
 t.post("/hello").action("hello");
@@ -109,128 +134,152 @@ t.post("/hello").action("hello");
 // GET / → reply text
 t.get("/").reply("Welcome to Titan");
 
-t.start(3000, "Titan is running!");
+t.start(3000, "Ready to land on Titan Planet 🚀");
 ```
 
-Titan generates routing metadata:
+Titan generates:
 
-- server/routes.json  
-- server/action_map.json  
+- `server/routes.json`
+- `server/action_map.json`
 
-These are then used by the Rust server.
+Used by the Rust runtime to dispatch requests.
 
-### Development Mode
+---
+
+# 🔥 Hot Reload Dev Mode
+
+Start development mode:
 
 ```bash
 tit dev
 ```
 
-Titan will:
+Titan Dev Mode will:
 
-- Generate route definitions  
-- Bundle JS into .jsbundle files  
-- Start Axum Rust server with live reload
+- Regenerate routes on every save  
+- Rebundle actions automatically  
+- **Kill and restart the Rust server safely**  
+- Give full hot reload like modern JS frameworks  
 
-### Production Build
+Full DX flow:
+
+```
+Save file → auto rebuild → auto restart → updated API
+```
+
+Supports:
+
+- Editing `app/app.js`
+- Editing `app/actions/*.js`
+- Fast rebuilds via esbuild
+
+---
+
+# 🏭 Production Build
 
 ```bash
 tit build
 ```
 
-This produces the final deployment-ready output:
+Production output goes into:
 
 ```
 server/
-  titan-server          ← release binary
-  routes.json
-  action_map.json
-  actions/*.jsbundle
-  titan/titan.jsbundle
+  titan-server
+  routes.json
+  action_map.json
+  actions/*.jsbundle
 ```
 
-Everything required for production is inside the server/ folder.
+You deploy **only the server folder**.
 
-### Deploying Titan
+---
 
-You deploy only the /server folder.
+# ☁ Deploying Titan
 
-Example (Railway):
+After `tit build`, deploy the `server/` folder anywhere:
 
-Build locally:
+- Railway  
+- Fly.io  
+- Docker  
+- VPS  
+- Render  
+- Bare metal  
 
-```bash
-tit build
-```
-
-Upload the /server folder
-
-Set start command:
+Start command:
 
 ```bash
 ./titan-server
 ```
 
-No Node.js needed in production. Titan servers run as pure Rust native binaries.
+No Node.js needed in production — Titan runs as a pure Rust binary.
 
-### How Titan Works Internally
+---
 
-1. JavaScript DSL
+# 🧠 How Titan Works (Internals)
 
-You write server logic using the Titan DSL:
+### 1. JavaScript DSL  
+You write backend logic using Titan’s intuitive DSL.
 
-- t.get()  
-- t.post()  
-- t.start()
+### 2. Bundler  
+Titan uses esbuild to compile JS actions into `.jsbundle`.
 
-2. Bundler
+### 3. Metadata  
+`t.start()` writes:
 
-Titan bundles actions using esbuild into .jsbundle.
+- `routes.json`
+- `action_map.json`
 
+### 4. Rust Server  
+Axum server:
 
-4. Rust Server
-
-The Rust Axum server:
-
-- Loads .jsbundle files  
+- Loads `.jsbundle` actions  
 - Injects request data  
-- Executes JS functions via Boa  
-- Returns Rust → JSON → client
+- Executes JS via Boa  
+- Returns JSON response to user  
 
-5. Production Output
+### 5. Production Output  
+Titan produces:
 
-Titan outputs:
-
-- Native Rust binary  
+- A **native binary**  
 - JS bundles  
-- Route maps
+- Route maps  
+- Entire backend in one folder  
 
-### Why Titan Exists
+---
 
-Titan targets JS developers who want:
+# 🎯 Why Titan Exists
 
-- Rust backend performance  
-- Without needing Rust knowledge  
-- With full JS developer experience  
-- And deployment as easy as Node
+Titan exists for developers who want:
+
+- Rust performance  
+- JavaScript simplicity  
+- Zero Rust learning curve  
+- Zero config deployment  
+- Modern DX + native speed  
 
 Titan bridges two worlds:
 
-JavaScript flexibility + Rust performance
+**JavaScript Productivity × Rust Performance**
 
-### Version
+---
 
-Titan v1 (Current)
+# 📌 Version
+
+**Titan v1 — Stable**
 
 - JS → Rust server compiler  
-- JavaScript Action Engine  
-- Axum runtime  
+- Action Engine  
+- Axum Runtime  
 - Titan DSL  
-- Hot reload  
-- Railway deployment
+- Hot Reload Dev Mode  
+- Railway/Fly.io Deployment  
 
+---
 
-### Contributing
+# 🤝 Contributing
 
-PRs, issues, and discussions are welcome.
+PRs, issues, suggestions, and feature discussions are welcome.
 
 ***
+

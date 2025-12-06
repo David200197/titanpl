@@ -4,6 +4,7 @@ import path from "path";
 import { execSync, spawn } from "child_process";
 import { fileURLToPath } from "url";
 
+// __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -17,9 +18,7 @@ const bold = (t) => `\x1b[1m${t}\x1b[0m`;
 const args = process.argv.slice(2);
 const cmd = args[0];
 
-// ------------------------------------------
 // COPY TEMPLATES
-// ------------------------------------------
 function copyDir(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
 
@@ -35,23 +34,19 @@ function copyDir(src, dest) {
     }
 }
 
-// ------------------------------------------
 // HELP
-// ------------------------------------------
 function help() {
     console.log(`
 ${bold(cyan("Titan CLI"))}
 
 ${green("tit init <project>")}   Create new Titan project
-${green("tit dev")}              Run dev server (routes + bundle + cargo)
-${green("tit build")}            Build Rust release
+${green("tit dev")}              Dev mode (hot reload)
+${green("tit build")}            Build production Rust server
 ${green("tit start")}            Start production binary
 `);
 }
 
-// ------------------------------------------
 // INIT PROJECT
-// ------------------------------------------
 function initProject(name) {
     if (!name) return console.log(red("Usage: tit init <project>"));
 
@@ -68,21 +63,14 @@ function initProject(name) {
     copyDir(templateDir, target);
 
     console.log(green("✔ Titan project created!"));
-    console.log(cyan("Installing Titan dependencies..."));
+    console.log(cyan("Installing dependencies..."));
 
-    const deps = [
-        "esbuild",
-    ];
-
-    execSync(`npm install ${deps.join(" ")} --silent`, {
+    execSync(`npm install esbuild --silent`, {
         cwd: target,
         stdio: "inherit"
     });
 
-    console.log(green("✔ Dependencies installed successfully"));
-
-
-    console.log(green("✔ Titan project created"));
+    console.log(green("✔ Dependencies installed"));
     console.log(`
 Next steps:
   cd ${name}
@@ -90,14 +78,11 @@ Next steps:
 `);
 }
 
-// ------------------------------------------
-// RUN BUNDLER
-// ------------------------------------------
+// BUNDLE
 function runBundler() {
     const bundler = path.join(process.cwd(), "titan", "bundle.js");
 
     if (fs.existsSync(bundler)) {
-        console.log(cyan("Titan: bundling actions..."));
         execSync(`node ${bundler}`, { stdio: "inherit" });
     } else {
         console.log(yellow("Warning: titan/bundle.js missing."));
@@ -105,29 +90,77 @@ function runBundler() {
 }
 
 // ------------------------------------------
-// DEV SERVER
+// FULL HOT RELOAD DEV SERVER
 // ------------------------------------------
-function devServer() {
-    console.log(cyan("Titan: generating routes.json & action_map.json..."));
-    execSync("node app/app.js", { stdio: "inherit" });
 
-    // RUN BUNDLER HERE
-    runBundler();
+async function devServer() {
+    console.log(cyan("Titan Dev Mode — Hot Reload Enabled"));
 
-    console.log(cyan("Titan: starting Rust server..."));
+    let rustProcess = null;
 
-    spawn("cargo", ["run"], {
-        cwd: path.join(process.cwd(), "server"),
-        stdio: "inherit",
-        shell: true,
+    function startRust() {
+        // ---- FIX: Proper kill for Windows ----
+        if (rustProcess) {
+            console.log(yellow("[Titan] Killing old Rust server..."));
+
+            if (process.platform === "win32") {
+                spawn("taskkill", ["/PID", rustProcess.pid, "/T", "/F"], {
+                    stdio: "inherit",
+                    shell: true
+                });
+            } else {
+                rustProcess.kill();
+            }
+        }
+
+        // ---- START NEW PROCESS ----
+        rustProcess = spawn("cargo", ["run"], {
+            cwd: path.join(process.cwd(), "server"),
+            stdio: "inherit",
+            shell: true,
+        });
+
+        rustProcess.on("close", (code) => {
+            console.log(red(`[Titan] Rust server exited: ${code}`));
+        });
+    }
+
+    function rebuild() {
+        console.log(cyan("Titan: Regenerating routes..."));
+        execSync("node app/app.js", { stdio: "inherit" });
+
+        console.log(cyan("Titan: Bundling actions..."));
+        runBundler();
+    }
+
+    // First build
+    rebuild();
+    startRust();
+
+    // WATCHER
+    const chokidar = (await import("chokidar")).default;
+
+    const watcher = chokidar.watch("app", { ignoreInitial: true });
+
+    let timer = null;
+
+    watcher.on("all", (event, file) => {
+        if (timer) clearTimeout(timer);
+
+        timer = setTimeout(() => {
+            console.log(yellow(`Change detected → ${file}`));
+
+            rebuild();
+            startRust();
+
+        }, 250);
     });
 }
 
-// ------------------------------------------
+
 // BUILD RELEASE
-// ------------------------------------------
 function buildProd() {
-    console.log(cyan("Titan: generating routes + bundling..."));
+    console.log(cyan("Titan: generate routes + bundle..."));
     execSync("node app/app.js", { stdio: "inherit" });
     runBundler();
 
@@ -138,13 +171,10 @@ function buildProd() {
     });
 }
 
-// ------------------------------------------
 // START PRODUCTION
-// ------------------------------------------
 function startProd() {
     const isWindows = process.platform === "win32";
-
-    const binaryName = isWindows ? "titan-server.exe" : "titan-server";    // Linux / macOS
+    const binaryName = isWindows ? "titan-server.exe" : "titan-server";
 
     const exe = path.join(
         process.cwd(),
@@ -157,11 +187,7 @@ function startProd() {
     execSync(`"${exe}"`, { stdio: "inherit" });
 }
 
-
-
-// ------------------------------------------
 // ROUTER
-// ------------------------------------------
 switch (cmd) {
     case "init":
         initProject(args[1]);
