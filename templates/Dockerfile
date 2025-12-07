@@ -6,7 +6,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
 # Install Titan CLI AND its required dependencies
-RUN npm install -g @ezetgalaxy/titan esbuild chokidar
+RUN npm install -g @ezetgalaxy/titan
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ WORKDIR /app
 COPY . .
 
 # Install Titan dependencies LOCALLY
-RUN npm install esbuild chokidar
+RUN npm install
 
 # Build Titan metadata (routes + bundles)
 RUN tit build
