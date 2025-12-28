@@ -172,7 +172,7 @@ fn inject_t_runtime(ctx: &mut Context, action_name: &str) {
             println!(
                 "{} {}",
                 blue("[Titan]"),
-                white(&format!("log({}): {}", action, parts.join(" ")))
+                gray(&format!("\x1b[90mlog({})\x1b[0m\x1b[97m: {}\x1b[0m", action, parts.join(" ")))
             );
 
             Ok(JsValue::undefined())

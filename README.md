@@ -108,6 +108,20 @@ Titan will:
 
 ---
 
+# Update to new version
+
+* At first update the cli 
+
+```bash
+npm install -g @ezetgalaxy/titan@latest
+```
+* Then 
+
+```bash
+tit update
+```
+* ``tit update`` will update and add new features in your Titan project
+
 
 # ✨ What Titan Can Do (New & Core Features)
 
