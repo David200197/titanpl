@@ -144,7 +144,7 @@ function initProject(name) {
     console.log(`
 Next steps:
   cd ${name}
-  tit dev
+  titan dev
 `);
 }
 
