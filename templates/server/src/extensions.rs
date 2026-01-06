@@ -1,558 +1,379 @@
-use bcrypt::{DEFAULT_COST, hash, verify};
-use boa_engine::{
-    Context, JsError, JsValue, js_string, native_function::NativeFunction,
-    object::ObjectInitializer, property::Attribute,
-};
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use postgres::types::{ToSql, Type};
-use postgres::{Client as PgClient, NoTls};
+use v8;
 use reqwest::{
     blocking::Client,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
-use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::sync::Once;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::task;
+use serde_json::Value;
+use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
+use bcrypt::{hash, verify, DEFAULT_COST};
 
 use crate::utils::{blue, gray, parse_expires_in};
 
+static V8_INIT: Once = Once::new();
 
+pub fn init_v8() {
+    V8_INIT.call_once(|| {
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform);
+        v8::V8::initialize();
+    });
+}
 
-/// Here add all the runtime t base things
-/// Injects a synchronous `t.fetch(url, opts?)` function into the Boa `Context`.
-pub fn inject_t_runtime(ctx: &mut Context, action_name: &str, project_root: &PathBuf) {
-    // =========================================================
-    // t.read(path)
-    // =========================================================
-    fn resolve_read_root(project_root: &PathBuf) -> PathBuf {
-        if cfg!(debug_assertions) {
-            project_root.join("app")
-        } else {
-            project_root.join("assets")
+fn v8_str<'s>(scope: &mut v8::HandleScope<'s>, s: &str) -> v8::Local<'s, v8::String> {
+    v8::String::new(scope, s).unwrap()
+}
+
+fn v8_to_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> String {
+    value.to_string(scope).unwrap().to_rust_string_lossy(scope)
+}
+
+fn throw(scope: &mut v8::HandleScope, msg: &str) {
+    let message = v8_str(scope, msg);
+    let exception = v8::Exception::error(scope, message);
+    scope.throw_exception(exception);
+}
+
+// ----------------------------------------------------------------------------
+// NATIVE CALLBACKS
+// ----------------------------------------------------------------------------
+
+fn native_read(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    let path_val = args.get(0);
+    // 1. Read argument
+    if !path_val.is_string() {
+        throw(scope, "t.read(path): path is required");
+        return;
+    }
+    let path_str = v8_to_string(scope, path_val);
+
+    // 2. Check if absolute
+    if std::path::Path::new(&path_str).is_absolute() {
+        throw(scope, "t.read expects a relative path like 'db/file.sql'");
+        return;
+    }
+
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let root_key = v8_str(scope, "__titan_root");
+    let root_val = global.get(scope, root_key.into()).unwrap();
+    
+    let root_str = if root_val.is_string() {
+        v8_to_string(scope, root_val)
+    } else {
+        throw(scope, "Internal Error: __titan_root not set");
+        return;
+    };
+
+    let root_path = PathBuf::from(root_str);
+    let root_path = root_path.canonicalize().unwrap_or(root_path);
+    let joined = root_path.join(&path_str);
+
+    // 3. Canonicalize (resolves ../)
+    let target = match joined.canonicalize() {
+        Ok(t) => t,
+        Err(_) => {
+            throw(scope, &format!("t.read: file not found: {}", path_str));
+            return;
+        }
+    };
+
+    // 4. Enforce root boundary
+    if !target.starts_with(&root_path) {
+        throw(scope, "t.read: path escapes allowed root");
+        return;
+    }
+
+    // 5. Read file
+    match std::fs::read_to_string(&target) {
+        Ok(content) => {
+            retval.set(v8_str(scope, &content).into());
+        },
+        Err(e) => {
+            throw(scope, &format!("t.read failed: {}", e));
+        }
+    }
+}
+
+fn native_log(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut _retval: v8::ReturnValue) {
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let action_key = v8_str(scope, "__titan_action");
+    let action_val = global.get(scope, action_key.into()).unwrap();
+    let action_name = v8_to_string(scope, action_val);
+
+    let mut parts = Vec::new();
+    for i in 0..args.length() {
+        let val = args.get(i);
+        let mut appended = false;
+        
+        // Try to JSON stringify objects so they are readable in logs
+        if val.is_object() && !val.is_function() {
+             if let Some(json) = v8::json::stringify(scope, val) {
+                 parts.push(json.to_rust_string_lossy(scope));
+                 appended = true;
+             }
+        }
+        
+        if !appended {
+            parts.push(v8_to_string(scope, val));
+        }
+    }
+    
+    println!(
+        "{} {}",
+        blue("[Titan]"),
+        gray(&format!("\x1b[90mlog({})\x1b[0m\x1b[97m: {}\x1b[0m", action_name, parts.join(" ")))
+    );
+}
+
+fn native_fetch(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    let url = v8_to_string(scope, args.get(0));
+    
+    // Check for options (method, headers, body)
+    let mut method = "GET".to_string();
+    let mut body_str = None;
+    let mut headers_vec = Vec::new();
+
+    let opts_val = args.get(1);
+    if opts_val.is_object() {
+        let opts_obj = opts_val.to_object(scope).unwrap();
+        
+        // method
+        let m_key = v8_str(scope, "method");
+        if let Some(m_val) = opts_obj.get(scope, m_key.into()) {
+            if m_val.is_string() {
+                method = v8_to_string(scope, m_val);
+            }
+        }
+        
+        // body
+        let b_key = v8_str(scope, "body");
+        if let Some(b_val) = opts_obj.get(scope, b_key.into()) {
+            if b_val.is_string() {
+                body_str = Some(v8_to_string(scope, b_val));
+            } else if b_val.is_object() {
+                 let json_obj = v8::json::stringify(scope, b_val).unwrap();
+                 body_str = Some(json_obj.to_rust_string_lossy(scope));
+            }
+        }
+        
+        // headers
+        let h_key = v8_str(scope, "headers");
+        if let Some(h_val) = opts_obj.get(scope, h_key.into()) {
+            if h_val.is_object() {
+                let h_obj = h_val.to_object(scope).unwrap();
+                if let Some(keys) = h_obj.get_own_property_names(scope, Default::default()) {
+                    for i in 0..keys.length() {
+                        let key = keys.get_index(scope, i).unwrap();
+                        let val = h_obj.get(scope, key).unwrap();
+                        headers_vec.push((
+                            v8_to_string(scope, key),
+                            v8_to_string(scope, val),
+                        ));
+                    }
+                }
+            }
         }
     }
 
-    let root = resolve_read_root(project_root).canonicalize().expect("read root must exist");
-
-    let t_read_native = unsafe {
-        NativeFunction::from_closure(move |_this, args, ctx| {
-            // ----------------------------------
-            // 1. Read argument
-            // ----------------------------------
-            let rel = args
-                .get(0)
-                .and_then(|v| v.to_string(ctx).ok())
-                .and_then(|s| s.to_std_string().ok())
-                .ok_or_else(|| {
-                    JsError::from_native(
-                        boa_engine::JsNativeError::typ()
-                            .with_message("t.read(path): path is required"),
-                    )
-                })?;
+    let client = Client::builder().use_rustls_tls().tcp_nodelay(true).build().unwrap_or(Client::new());
+    
+    let mut req = client.request(method.parse().unwrap_or(reqwest::Method::GET), &url);
+    
+    for (k, v) in headers_vec {
+        if let (Ok(name), Ok(val)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v)) {
+            let mut map = HeaderMap::new();
+            map.insert(name, val);
+            req = req.headers(map);
+        }
+    }
+    
+    if let Some(b) = body_str {
+        req = req.body(b);
+    }
+    
+    let res = req.send();
+    
+    let obj = v8::Object::new(scope);
+    match res {
+        Ok(r) => {
+            let status = r.status().as_u16();
+            let text = r.text().unwrap_or_default();
             
-            if Path::new(&rel).is_absolute() {
-                return Err(JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("t.read expects a relative path like 'db/file.sql'"),
-                ));
-            }
-
-
-
-
-
-            let joined = root.join(&rel);
-
-            // ----------------------------------
-            // 3. Canonicalize (resolves ../)
-            // ----------------------------------
-            let target = joined.canonicalize().map_err(|_| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::error()
-                        .with_message(format!("t.read: file not found: {}", rel)),
-                )
-            })?;
-
-            // ----------------------------------
-            // 4. Enforce root boundary
-            // ----------------------------------
-            if !target.starts_with(&root) {
-                return Err(JsError::from_native(
-                    boa_engine::JsNativeError::error()
-                        .with_message("t.read: path escapes allowed root"),
-                ));
-            }
-
-            // ----------------------------------
-            // 5. Read file
-            // ----------------------------------
-            let content = std::fs::read_to_string(&target).map_err(|e| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::error()
-                        .with_message(format!("t.read failed: {}", e)),
-                )
-            })?;
-
-            Ok(JsValue::from(js_string!(content)))
-        })
-    };
-
-    // =========================================================
-    // t.log(...)  — unsafe by design (Boa requirement)
-    // =========================================================
-    let action = action_name.to_string();
-
-    let t_log_native = unsafe {
-        NativeFunction::from_closure(move |_this, args, _ctx| {
-            let mut parts = Vec::new();
-
-            for arg in args {
-                parts.push(arg.display().to_string());
-            }
-
-            println!(
-                "{} {}",
-                blue("[Titan]"),
-                gray(&format!(
-                    "\x1b[90mlog({})\x1b[0m\x1b[97m: {}\x1b[0m",
-                    action,
-                    parts.join(" ")
-                ))
-            );
-
-            Ok(JsValue::undefined())
-        })
-    };
-
-    // =========================================================
-    // t.fetch(...) — no capture, safe fn pointer
-    // =========================================================
-    let t_fetch_native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        // -----------------------------
-        // 1. URL (required)
-        // -----------------------------
-        let url = match args.get(0) {
-            Some(v) => v.to_string(ctx)?.to_std_string_escaped(),
-            None => {
-                return Err(JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("t.fetch(url[, options]): url is required"),
-                ));
-            }
-        };
-
-        // -----------------------------
-        // 2. Options
-        // -----------------------------
-        let opts_js = args.get(1).cloned().unwrap_or(JsValue::Null);
-
-        let opts_json = match opts_js.to_json(ctx) {
-            Ok(v) => v,
-            Err(_) => Value::Object(serde_json::Map::new()),
-        };
-
-        let method = opts_json
-            .get("method")
-            .and_then(|m| m.as_str())
-            .unwrap_or("GET")
-            .to_string();
-
-        let body_opt = opts_json.get("body").map(|v| {
-            if v.is_string() {
-                v.as_str().unwrap().to_string()
-            } else {
-                serde_json::to_string(v).unwrap_or_default()
-            }
-        });
-
-        let mut header_pairs = Vec::new();
-        if let Some(Value::Object(map)) = opts_json.get("headers") {
-            for (k, v) in map {
-                if let Some(val) = v.as_str() {
-                    header_pairs.push((k.clone(), val.to_string()));
-                }
-            }
+            let status_key = v8_str(scope, "status");
+            let status_val = v8::Number::new(scope, status as f64);
+            obj.set(scope, status_key.into(), status_val.into());
+            
+            let body_key = v8_str(scope, "body");
+            let body_val = v8_str(scope, &text);
+            obj.set(scope, body_key.into(), body_val.into());
+            
+            let ok_key = v8_str(scope, "ok");
+            let ok_val = v8::Boolean::new(scope, true);
+            obj.set(scope, ok_key.into(), ok_val.into());
+        }, 
+        Err(e) => {
+            let ok_key = v8_str(scope, "ok");
+            let ok_val = v8::Boolean::new(scope, false);
+            obj.set(scope, ok_key.into(), ok_val.into());
+            
+            let err_key = v8_str(scope, "error");
+            let err_val = v8_str(scope, &e.to_string());
+            obj.set(scope, err_key.into(), err_val.into());
         }
+    }
+    retval.set(obj.into());
+}
 
-        // -----------------------------
-        // 3. Blocking HTTP (safe fallback)
-        // -----------------------------
-        let out_json = task::block_in_place(move || {
-            let client = Client::builder()
-                .use_rustls_tls()
-                .tcp_nodelay(true)
-                .build()
-                .unwrap();
+fn native_jwt_sign(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    // payload, secret, options
+    let payload_val = args.get(0);
+    // Parse payload to serde_json::Map
+    let json_str = v8::json::stringify(scope, payload_val).unwrap().to_rust_string_lossy(scope);
+    let mut payload: serde_json::Map<String, Value> = serde_json::from_str(&json_str).unwrap_or_default();
 
-            let mut req = client.request(method.parse().unwrap_or(reqwest::Method::GET), &url);
-
-            if !header_pairs.is_empty() {
-                let mut headers = HeaderMap::new();
-                for (k, v) in header_pairs {
-                    if let (Ok(name), Ok(val)) = (
-                        HeaderName::from_bytes(k.as_bytes()),
-                        HeaderValue::from_str(&v),
-                    ) {
-                        headers.insert(name, val);
-                    }
-                }
-                req = req.headers(headers);
-            }
-
-            if let Some(body) = body_opt {
-                req = req.body(body);
-            }
-
-            match req.send() {
-                Ok(resp) => serde_json::json!({
-                    "ok": true,
-                    "status": resp.status().as_u16(),
-                    "body": resp.text().unwrap_or_default()
-                }),
-                Err(e) => serde_json::json!({
-                    "ok": false,
-                    "error": e.to_string()
-                }),
-            }
-        });
-
-        // -----------------------------
-        // 4. JSON → JsValue (NO undefined fallback)
-        // -----------------------------
-        match JsValue::from_json(&out_json, ctx) {
-            Ok(v) => Ok(v),
-            Err(e) => Err(boa_engine::JsNativeError::error()
-                .with_message(format!("t.fetch: JSON conversion failed: {}", e))
-                .into()),
+    let secret = v8_to_string(scope, args.get(1));
+    
+    let opts_val = args.get(2);
+    if opts_val.is_object() {
+        let opts_obj = opts_val.to_object(scope).unwrap();
+        let exp_key = v8_str(scope, "expiresIn");
+        
+        if let Some(val) = opts_obj.get(scope, exp_key.into()) {
+             let seconds = if val.is_number() {
+                 Some(val.to_number(scope).unwrap().value() as u64)
+             } else if val.is_string() {
+                 parse_expires_in(&v8_to_string(scope, val))
+             } else {
+                 None
+             };
+             
+             if let Some(sec) = seconds {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                payload.insert("exp".to_string(), Value::Number(serde_json::Number::from(now + sec)));
+             }
         }
-    });
+    }
 
-    // =========================================================
+    let token = encode(
+        &Header::default(),
+        &Value::Object(payload),
+        &EncodingKey::from_secret(secret.as_bytes()),
+    );
+
+    match token {
+        Ok(t) => retval.set(v8_str(scope, &t).into()),
+        Err(e) => throw(scope, &e.to_string()),
+    }
+}
+
+fn native_jwt_verify(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    let token = v8_to_string(scope, args.get(0));
+    let secret = v8_to_string(scope, args.get(1));
+    
+    let mut validation = Validation::default();
+    validation.validate_exp = true;
+    
+    let data = decode::<Value>(
+        &token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    );
+    
+    match data {
+        Ok(d) => {
+             // Convert claim back to V8 object via JSON
+             let json_str = serde_json::to_string(&d.claims).unwrap();
+             let v8_json_str = v8_str(scope, &json_str);
+             if let Some(val) = v8::json::parse(scope, v8_json_str) {
+                 retval.set(val);
+             }
+        },
+        Err(e) => throw(scope, &format!("Invalid or expired JWT: {}", e)),
+    }
+}
+
+fn native_password_hash(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    let pw = v8_to_string(scope, args.get(0));
+    match hash(pw, DEFAULT_COST) {
+        Ok(h) => retval.set(v8_str(scope, &h).into()),
+        Err(e) => throw(scope, &e.to_string()),
+    }
+}
+
+fn native_password_verify(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    let pw = v8_to_string(scope, args.get(0));
+    let hash_str = v8_to_string(scope, args.get(1));
+    
+    let ok = verify(pw, &hash_str).unwrap_or(false);
+    retval.set(v8::Boolean::new(scope, ok).into());
+}
+
+fn native_define_action(_scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    retval.set(args.get(0));
+}
+
+// ----------------------------------------------------------------------------
+// INJECTOR
+// ----------------------------------------------------------------------------
+
+pub fn inject_extensions(scope: &mut v8::HandleScope, global: v8::Local<v8::Object>) {
+    let t_obj = v8::Object::new(scope);
+
+    // defineAction (identity function for clean typing)
+    let def_fn = v8::Function::new(scope, native_define_action).unwrap();
+    let def_key = v8_str(scope, "defineAction");
+    global.set(scope, def_key.into(), def_fn.into());
+    
+    // t.read
+    let read_fn = v8::Function::new(scope, native_read).unwrap();
+    let read_key = v8_str(scope, "read");
+    t_obj.set(scope, read_key.into(), read_fn.into());
+
+    // t.log
+    let log_fn = v8::Function::new(scope, native_log).unwrap();
+    let log_key = v8_str(scope, "log");
+    t_obj.set(scope, log_key.into(), log_fn.into());
+    
+    // t.fetch
+    let fetch_fn = v8::Function::new(scope, native_fetch).unwrap();
+    let fetch_key = v8_str(scope, "fetch");
+    t_obj.set(scope, fetch_key.into(), fetch_fn.into());
+
     // t.jwt
-    // =========================================================
-    let t_jwt_sign = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        // payload (must be object)
-        let mut payload = args
-            .get(0)
-            .and_then(|v| v.to_json(ctx).ok())
-            .and_then(|v| v.as_object().cloned())
-            .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("t.jwt.sign(payload, secret[, options])"),
-                )
-            })?;
+    let jwt_obj = v8::Object::new(scope);
+    let sign_fn = v8::Function::new(scope, native_jwt_sign).unwrap();
+    let verify_fn = v8::Function::new(scope, native_jwt_verify).unwrap();
+    
+    let sign_key = v8_str(scope, "sign");
+    jwt_obj.set(scope, sign_key.into(), sign_fn.into());
+    let verify_key = v8_str(scope, "verify");
+    jwt_obj.set(scope, verify_key.into(), verify_fn.into());
+    
+    let jwt_key = v8_str(scope, "jwt");
+    t_obj.set(scope, jwt_key.into(), jwt_obj.into());
 
-        // secret
-        let secret = args
-            .get(1)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-
-        if let Some(opts) = args.get(2) {
-            if let Ok(Value::Object(opts)) = opts.to_json(ctx) {
-                if let Some(exp) = opts.get("expiresIn") {
-                    let seconds = match exp {
-                        Value::Number(n) => n.as_u64(),
-                        Value::String(s) => parse_expires_in(s),
-                        _ => None,
-                    };
-
-                    if let Some(sec) = seconds {
-                        let now = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-
-                        payload.insert(
-                            "exp".to_string(),
-                            Value::Number(serde_json::Number::from(now + sec)),
-                        );
-                    }
-                }
-            }
-        }
-
-        let token = encode(
-            &Header::default(),
-            &Value::Object(payload),
-            &EncodingKey::from_secret(secret.as_bytes()),
-        )
-        .map_err(|e| {
-            JsError::from_native(boa_engine::JsNativeError::error().with_message(e.to_string()))
-        })?;
-
-        Ok(JsValue::from(js_string!(token)))
-    });
-
-    let t_jwt_verify = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let token = args
-            .get(0)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-
-        let secret = args
-            .get(1)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-
-        let mut validation = Validation::default();
-        validation.validate_exp = true;
-
-        let data = decode::<Value>(
-            &token,
-            &DecodingKey::from_secret(secret.as_bytes()),
-            &validation,
-        )
-        .map_err(|_| {
-            JsError::from_native(
-                boa_engine::JsNativeError::error().with_message("Invalid or expired JWT"),
-            )
-        })?;
-
-        JsValue::from_json(&data.claims, ctx).map_err(|e| e.into())
-    });
-
-    // =========================================================
     // t.password
-    // =========================================================
-    let t_password_hash = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let password = args
-            .get(0)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
+    let pw_obj = v8::Object::new(scope);
+    let hash_fn = v8::Function::new(scope, native_password_hash).unwrap();
+    let pw_verify_fn = v8::Function::new(scope, native_password_verify).unwrap();
+    
+    let hash_key = v8_str(scope, "hash");
+    pw_obj.set(scope, hash_key.into(), hash_fn.into());
+    let pw_verify_key = v8_str(scope, "verify");
+    pw_obj.set(scope, pw_verify_key.into(), pw_verify_fn.into());
+    
+    let pw_key = v8_str(scope, "password");
+    t_obj.set(scope, pw_key.into(), pw_obj.into());
 
-        let hashed = hash(password, DEFAULT_COST).map_err(|e| {
-            JsError::from_native(boa_engine::JsNativeError::error().with_message(e.to_string()))
-        })?;
+    // t.db (Stub for now)
+    let db_obj = v8::Object::new(scope);
+    let db_key = v8_str(scope, "db");
+    t_obj.set(scope, db_key.into(), db_obj.into());
 
-        Ok(JsValue::from(js_string!(hashed)))
-    });
-
-    let t_password_verify = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let password = args
-            .get(0)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-
-        let hash_str = args
-            .get(1)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-
-        let ok = verify(password, &hash_str).unwrap_or(false);
-
-        Ok(JsValue::from(ok))
-    });
-
-    // =========================================================
-    // t.db (Synchronous Postgres)
-    // =========================================================
-    let t_db_connect = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let url = args
-            .get(0)
-            .and_then(|v| v.to_string(ctx).ok())
-            .map(|s| s.to_std_string_escaped())
-            .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("t.db.connect(url): url string is required"),
-                )
-            })?;
-
-        let url_clone = url.clone();
-
-        let query_fn = unsafe {
-            NativeFunction::from_closure(move |_this, args, ctx| {
-                let sql = args
-                    .get(0)
-                    .and_then(|v| v.to_string(ctx).ok())
-                    .map(|s| s.to_std_string_escaped())
-                    .ok_or_else(|| {
-                        JsError::from_native(
-                            boa_engine::JsNativeError::typ()
-                                .with_message("db.query(sql, params): sql is required"),
-                        )
-                    })?;
-
-                let params_val = args.get(1).cloned().unwrap_or(JsValue::Null);
-
-                let json_params: Vec<Value> = if let Ok(val) = params_val.to_json(ctx) {
-                    if let Value::Array(arr) = val {
-                        arr
-                    } else {
-                        vec![]
-                    }
-                } else {
-                    vec![]
-                };
-
-                let url_for_query = url_clone.clone();
-
-                let result_json = task::block_in_place(move || {
-                    let mut client = match PgClient::connect(&url_for_query, NoTls) {
-                        Ok(c) => c,
-                        Err(e) => return Err(format!("Connection failed: {}", e)),
-                    };
-
-                    // We need to map `Vec<Value>` to `&[&dyn ToSql]`.
-
-                    let mut typed_params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
-
-                    for p in json_params {
-                        match p {
-                            Value::String(s) => typed_params.push(Box::new(s)),
-                            Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    typed_params.push(Box::new(i));
-                                } else if let Some(f) = n.as_f64() {
-                                    typed_params.push(Box::new(f));
-                                }
-                            }
-                            Value::Bool(b) => typed_params.push(Box::new(b)),
-                            Value::Null => typed_params.push(Box::new(Option::<String>::None)), // Typed null?
-                            // Fallback others to JSON
-                            obj => typed_params.push(Box::new(obj)),
-                        }
-                    }
-
-                    let param_refs: Vec<&(dyn ToSql + Sync)> =
-                        typed_params.iter().map(|x| x.as_ref()).collect();
-
-                    let rows = client.query(&sql, &param_refs).map_err(|e| e.to_string())?;
-
-                    // Convert rows to JSON
-                    let mut out_rows = Vec::new();
-                    for row in rows {
-                        let mut map = serde_json::Map::new();
-                        // We need column names.
-                        for (i, col) in row.columns().iter().enumerate() {
-                            let name = col.name().to_string();
-
-                            let val: Value = match *col.type_() {
-                                Type::BOOL => Value::Bool(row.get(i)),
-                                Type::INT2 | Type::INT4 | Type::INT8 => {
-                                    let v: Option<i64> = row.get::<_, Option<i64>>(i);
-                                    v.map(|n| Value::Number(n.into())).unwrap_or(Value::Null)
-                                }
-                                Type::FLOAT4 | Type::FLOAT8 => {
-                                    let v: Option<f64> = row.get::<_, Option<f64>>(i);
-                                    v.map(|n| {
-                                        serde_json::Number::from_f64(n)
-                                            .map(Value::Number)
-                                            .unwrap_or(Value::Null)
-                                    })
-                                    .unwrap_or(Value::Null)
-                                }
-                                Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME => {
-                                    let v: Option<String> = row.get(i);
-                                    v.map(Value::String).unwrap_or(Value::Null)
-                                }
-                                Type::JSON | Type::JSONB => {
-                                    let v: Option<Value> = row.get(i);
-                                    v.unwrap_or(Value::Null)
-                                }
-                                _ => Value::Null,
-                            };
-                            map.insert(name, val);
-                        }
-                        out_rows.push(Value::Object(map));
-                    }
-
-                    Ok(out_rows)
-                });
-
-                match result_json {
-                    Ok(rows) => JsValue::from_json(&Value::Array(rows), ctx),
-                    Err(e) => Err(JsError::from_native(
-                        boa_engine::JsNativeError::error().with_message(e),
-                    )),
-                }
-            })
-        };
-
-        // Build object
-
-        let realm = ctx.realm().clone(); // Fix context borrow
-        let obj = ObjectInitializer::new(ctx)
-            .property(
-                js_string!("query"),
-                query_fn.to_js_function(&realm),
-                Attribute::all(),
-            )
-            .build();
-
-        Ok(JsValue::from(obj))
-    });
-
-    // =========================================================
-    // Build global `t`
-    // =========================================================
-    let realm = ctx.realm().clone();
-
-    let jwt_obj = ObjectInitializer::new(ctx)
-        .property(
-            js_string!("sign"),
-            t_jwt_sign.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .property(
-            js_string!("verify"),
-            t_jwt_verify.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .build();
-
-    let password_obj = ObjectInitializer::new(ctx)
-        .property(
-            js_string!("hash"),
-            t_password_hash.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .property(
-            js_string!("verify"),
-            t_password_verify.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .build();
-
-    let db_obj = ObjectInitializer::new(ctx)
-        .property(
-            js_string!("connect"),
-            t_db_connect.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .build();
-
-    let t_obj = ObjectInitializer::new(ctx)
-        .property(
-            js_string!("log"),
-            t_log_native.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .property(
-            js_string!("fetch"),
-            t_fetch_native.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .property(
-            js_string!("read"),
-            t_read_native.to_js_function(&realm),
-            Attribute::all(),
-        )
-        .property(js_string!("jwt"), jwt_obj, Attribute::all())
-        .property(js_string!("password"), password_obj, Attribute::all())
-        .property(js_string!("db"), db_obj, Attribute::all())
-        .build();
-
-    ctx.global_object()
-        .set(js_string!("t"), JsValue::from(t_obj), false, ctx)
-        .expect("set global t");
+    let t_key = v8_str(scope, "t");
+    global.set(scope, t_key.into(), t_obj.into());
 }

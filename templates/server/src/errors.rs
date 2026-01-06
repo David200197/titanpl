@@ -1,4 +1,4 @@
-use boa_engine::JsError;
+use v8::JsError;
 
 // A helper to Format Boa Errors
 pub fn format_js_error(err: JsError, action: &str) -> String {

@@ -175,106 +175,29 @@ Next steps:
 `);
 }
 
-
-/* -------------------------------------------------------
- * BUNDLER
- * ----------------------------------------------------- */
-function runBundler(root) {
-    const bundler = path.join(root, "titan", "bundle.js");
-
-    if (!fs.existsSync(bundler)) {
-        console.log(red("ERROR: titan/bundle.js missing."));
-        process.exit(1);
-    }
-
-    execSync(`node "${bundler}"`, { stdio: "inherit" });
-}
-
 /* -------------------------------------------------------
  * DEV SERVER
  * ----------------------------------------------------- */
 async function devServer() {
     const root = process.cwd();
-    console.log(cyan("Titan Dev Mode — Hot Reload Enabled"));
+    const devScript = path.join(root, "titan", "dev.js");
 
-    let rustProcess = null;
-
-    function launchRust(done) {
-        const processHandle = spawn("cargo", ["run"], {
-            cwd: path.join(root, "server"),
-            stdio: "inherit",
-            shell: true,
-        });
-
-        processHandle.on("spawn", () => setTimeout(done, 200));
-        processHandle.on("close", (code) =>
-            console.log(`[Titan] Rust server exited: ${code}`)
-        );
-
-        return processHandle;
+    if (!fs.existsSync(devScript)) {
+        console.log(red("Error: titan/dev.js not found."));
+        console.log("Try running `titan update` to fix missing files.");
+        return;
     }
 
-    function startRust() {
-        return new Promise((resolve) => {
-            if (rustProcess) {
-                console.log("[Titan] Restarting Rust server...");
+    const child = spawn("node", [devScript], {
+        stdio: "inherit",
+        cwd: root
+    });
 
-                if (process.platform === "win32") {
-                    const killer = spawn("taskkill", ["/PID", rustProcess.pid, "/T", "/F"], {
-                        stdio: "ignore",
-                        shell: true,
-                    });
-
-                    killer.on("exit", () => {
-                        rustProcess = launchRust(resolve);
-                    });
-                } else {
-                    rustProcess.kill();
-                    rustProcess.on("close", () => {
-                        rustProcess = launchRust(resolve);
-                    });
-                }
-            } else {
-                rustProcess = launchRust(resolve);
-            }
-        });
-    }
-
-    /* Build logic */
-    function rebuild() {
-        execSync(`node "${path.join(root, "app", "app.js")}"`, {
-            stdio: "inherit",
-        });
-
-        runBundler(root);
-    }
-
-    try {
-        rebuild();
-        startRust();
-    } catch (e) {
-        console.log(red("Initial build failed:"));
-        console.log(e.message);
-        // Do not die even on initial fail, user might fix it.
-    }
-
-    const chokidar = (await import("chokidar")).default;
-    const watcher = chokidar.watch("app", { ignoreInitial: true });
-
-    let timer = null;
-
-    watcher.on("all", (event, file) => {
-        if (timer) clearTimeout(timer);
-
-        timer = setTimeout(() => {
-            console.log(yellow(`Change → ${file}`));
-            try {
-                rebuild();
-                startRust();
-            } catch (err) {
-                console.log(red("Build failed — waiting for changes..."));
-            }
-        }, 250);
+    child.on("close", (code) => {
+        // Exit strictly if the dev script failed
+        if (code !== 0) {
+            process.exit(code);
+        }
     });
 }
 
@@ -413,7 +336,7 @@ function updateTitan() {
     console.log(green("✔ Updated server/src/"));
 
     // Root-level config files
-    [".gitignore", ".dockerignore", "Dockerfile"].forEach((file) => {
+    [".gitignore", ".dockerignore", "Dockerfile", "jsconfig.json"].forEach((file) => {
         const src = path.join(templatesRoot, file);
         const dest = path.join(root, file);
 
@@ -425,7 +348,7 @@ function updateTitan() {
 
     // app/titan.d.ts (JS typing contract)
     const appDir = path.join(root, "app");
-    const srcDts = path.join(templatesRoot, "titan.d.ts");
+    const srcDts = path.join(templateServer, "../app/titan.d.ts"); // templates/app/titan.d.ts
     const destDts = path.join(appDir, "titan.d.ts");
 
     if (fs.existsSync(srcDts)) {

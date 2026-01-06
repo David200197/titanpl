@@ -8,20 +8,17 @@ use axum::{
     routing::any,
     Router,
 };
-
-use boa_engine::{Context, Source};
 use serde_json::Value;
 use tokio::net::TcpListener;
 use std::time::Instant;
 
 mod utils;
-mod errors;
+
 mod extensions;
 mod action_management;
 
 use utils::{blue, white, yellow, green, gray, red};
-use errors::format_js_error;
-use extensions::inject_t_runtime;
+use extensions::{init_v8, inject_extensions};
 use action_management::{
     resolve_actions_dir, find_actions_dir, match_dynamic_route, 
     DynamicRoute, RouteVal
@@ -44,7 +41,6 @@ async fn dynamic_route(state: State<AppState>, req: Request<Body>) -> impl IntoR
     dynamic_handler_inner(state, req).await
 }
 
-/// Main handler: looks up routes.json and executes action bundles using Boa.
 async fn dynamic_handler_inner(
     State(state): State<AppState>,
     req: Request<Body>,
@@ -97,11 +93,7 @@ async fn dynamic_handler_inner(
     let body_bytes = match to_bytes(body, usize::MAX).await {
         Ok(b) => b,
         Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Failed to read request body",
-            )
-                .into_response()
+            return (StatusCode::BAD_REQUEST, "Failed to read request body").into_response()
         }
     };
 
@@ -121,39 +113,24 @@ async fn dynamic_handler_inner(
     // Exact route
     if let Some(route) = state.routes.get(&key) {
         route_kind = "exact";
-
         if route.r#type == "action" {
             let name = route.value.as_str().unwrap_or("unknown").to_string();
             route_label = name.clone();
             action_name = Some(name);
         } else if route.r#type == "json" {
             let elapsed = start.elapsed();
-            println!(
-                "{} {} {} {}",
-                blue("[Titan]"),
-                white(&format!("{} {}", method, path)),
-                white("→ json"),
-                gray(&format!("in {:.2?}", elapsed))
-            );
+            println!("{} {} {} {}", blue("[Titan]"), white(&format!("{} {}", method, path)), white("→ json"), gray(&format!("in {:.2?}", elapsed)));
             return Json(route.value.clone()).into_response();
         } else if let Some(s) = route.value.as_str() {
             let elapsed = start.elapsed();
-            println!(
-                "{} {} {} {}",
-                blue("[Titan]"),
-                white(&format!("{} {}", method, path)),
-                white("→ reply"),
-                gray(&format!("in {:.2?}", elapsed))
-            );
+            println!("{} {} {} {}", blue("[Titan]"), white(&format!("{} {}", method, path)), white("→ reply"), gray(&format!("in {:.2?}", elapsed)));
             return s.to_string().into_response();
         }
     }
 
     // Dynamic route
     if action_name.is_none() {
-        if let Some((action, p)) =
-            match_dynamic_route(&method, &path, state.dynamic_routes.as_slice())
-        {
+        if let Some((action, p)) = match_dynamic_route(&method, &path, state.dynamic_routes.as_slice()) {
             route_kind = "dynamic";
             route_label = action.clone();
             action_name = Some(action);
@@ -165,13 +142,7 @@ async fn dynamic_handler_inner(
         Some(a) => a,
         None => {
             let elapsed = start.elapsed();
-            println!(
-                "{} {} {} {}",
-                blue("[Titan]"),
-                white(&format!("{} {}", method, path)),
-                white("→ 404"),
-                gray(&format!("in {:.2?}", elapsed))
-            );
+            println!("{} {} {} {}", blue("[Titan]"), white(&format!("{} {}", method, path)), white("→ 404"), gray(&format!("in {:.2?}", elapsed)));
             return (StatusCode::NOT_FOUND, "Not Found").into_response();
         }
     };
@@ -180,8 +151,7 @@ async fn dynamic_handler_inner(
     // LOAD ACTION
     // ---------------------------
     let resolved = resolve_actions_dir();
-    let actions_dir = resolved
-        .exists()
+    let actions_dir = resolved.exists()
         .then(|| resolved)
         .or_else(|| find_actions_dir(&state.project_root))
         .unwrap();
@@ -190,29 +160,15 @@ async fn dynamic_handler_inner(
     let js_code = match fs::read_to_string(&action_path) {
         Ok(c) => c,
         Err(_) => {
-             // Handle missing bundle gracefully
-             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Action bundle not found",
-                    "action": action_name
-                })),
-            ).into_response()
+             return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Action bundle not found", "action": action_name}))).into_response()
         }
     };
 
     // ---------------------------
-    // ENV
+    // EXECUTE IN V8
     // ---------------------------
-    let env_json = std::env::vars()
-        .map(|(k, v)| (k, Value::String(v)))
-        .collect::<serde_json::Map<_, _>>();
+    let env_json = std::env::vars().map(|(k, v)| (k, Value::String(v))).collect::<serde_json::Map<_, _>>();
 
-
-
-    // ---------------------------
-    // JS EXECUTION
-    // ---------------------------
     let injected = format!(
         r#"
         globalThis.process = {{ env: {} }};
@@ -224,8 +180,15 @@ async fn dynamic_handler_inner(
             params: {},
             query: {}
         }};
-        {};
-        globalThis["{}"](__titan_req);
+        (function() {{
+            {}
+        }})(); // Run the bundle
+        // Call the action
+        if (typeof globalThis["{}"] === 'function') {{
+            globalThis["{}"](__titan_req);
+        }} else {{
+            throw new Error("Action function '{}' not found in bundle");
+        }}
         "#,
         Value::Object(env_json).to_string(),
         body_json.to_string(),
@@ -235,90 +198,84 @@ async fn dynamic_handler_inner(
         serde_json::to_string(&params).unwrap(),
         serde_json::to_string(&query).unwrap(),
         js_code,
+        action_name,
+        action_name,
         action_name
     );
 
-    let mut ctx = Context::default();
-    inject_t_runtime(&mut ctx, &action_name, &state.project_root);
-    let result = match ctx.eval(Source::from_bytes(&injected)) {
-        Ok(v) => v,
-        Err(err) => {
-            let elapsed = start.elapsed();
+    // Run V8 in a blocking task safely?
+    // Axum handlers are async. V8 operations should be blocking.
+    // We can use `task::spawn_blocking`.
+    let root = state.project_root.clone();
+    let action_name_for_v8 = action_name.clone();
     
-            let details = format_js_error(err, &route_label);
-    
-            println!(
-                "{} {} {} {}",
-                blue("[Titan]"),
-                red(&format!("{} {}", method, path)),
-                red("→ error"),
-                gray(&format!("in {:.2?}", elapsed))
-            );
-    
-            println!("{}", red(&details));
-    
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Action execution failed",
-                    "action": route_label,
-                    "details": details
-                })),
-            )
-                .into_response();
-        }
-    };
-    
-    let result_json: Value = if result.is_undefined() {
-        Value::Null
-    } else {
-        match result.to_json(&mut ctx) {
-            Ok(v) => v,
-            Err(err) => {
-                let elapsed = start.elapsed();
-                println!(
-                    "{} {} {} {}",
-                    blue("[Titan]"),
-                    red(&format!("{} {}", method, path)),
-                    red("→ serialization error"),
-                    gray(&format!("in {:.2?}", elapsed))
-                );
-    
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": "Failed to serialize action result",
-                        "details": err.to_string()
-                    })),
-                )
-                    .into_response();
+    let result_json: Value = tokio::task::spawn_blocking(move || {
+        let isolate = &mut v8::Isolate::new(v8::CreateParams::default());
+        let handle_scope = &mut v8::HandleScope::new(isolate);
+        let context = v8::Context::new(handle_scope, v8::ContextOptions::default());
+        let scope = &mut v8::ContextScope::new(handle_scope, context);
+        
+        let global = context.global(scope);
+
+        // Inject extensions (t.read, etc)
+        inject_extensions(scope, global);
+        
+        // Set metadata globals
+        // Set metadata globals
+        let root_str = v8::String::new(scope, root.to_str().unwrap_or(".")).unwrap();
+        let root_key = v8::String::new(scope, "__titan_root").unwrap();
+        global.set(scope, root_key.into(), root_str.into());
+        
+        let action_str = v8::String::new(scope, &action_name_for_v8).unwrap();
+        let action_key = v8::String::new(scope, "__titan_action").unwrap();
+        global.set(scope, action_key.into(), action_str.into());
+        
+        let source = v8::String::new(scope, &injected).unwrap();
+        
+        let try_catch = &mut v8::TryCatch::new(scope);
+        
+        let script = match v8::Script::compile(try_catch, source, None) {
+             Some(s) => s,
+             None => {
+                 let err = try_catch.message().unwrap();
+                 let msg = err.get(try_catch).to_rust_string_lossy(try_catch);
+                 return serde_json::json!({ "error": msg, "phase": "compile" });
+             }
+        };
+        
+        let result = script.run(try_catch);
+        
+        match result {
+            Some(val) => {
+                // Convert v8 Value to Serde JSON
+                // Minimal impl: stringify
+                let json_obj = v8::json::stringify(try_catch, val).unwrap();
+                let json_str = json_obj.to_rust_string_lossy(try_catch);
+                serde_json::from_str(&json_str).unwrap_or(Value::Null)
+            },
+            None => {
+                 let err = try_catch.message().unwrap();
+                 let msg = err.get(try_catch).to_rust_string_lossy(try_catch);
+                 serde_json::json!({ "error": msg, "phase": "execution" })
             }
         }
-    };
-    
-    
+    }).await.unwrap_or(serde_json::json!({"error": "V8 task failed"}));
+
     // ---------------------------
     // FINAL LOG
     // ---------------------------
     let elapsed = start.elapsed();
+    
+    // Check for errors in result
+    if let Some(err) = result_json.get("error") {
+        println!("{} {} {} {}", blue("[Titan]"), red(&format!("{} {}", method, path)), red("→ error"), gray(&format!("in {:.2?}", elapsed)));
+        println!("{}", red(err.as_str().unwrap_or("Unknown")));
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(result_json)).into_response();
+    }
+
     match route_kind {
-        "dynamic" => println!(
-            "{} {} {} {} {} {}",
-            blue("[Titan]"),
-            green(&format!("{} {}", method, path)),
-            white("→"),
-            green(&route_label),
-            white("(dynamic)"),
-            gray(&format!("in {:.2?}", elapsed))
-        ),
-        "exact" => println!(
-            "{} {} {} {} {}",
-            blue("[Titan]"),
-            white(&format!("{} {}", method, path)),
-            white("→"),
-            yellow(&route_label),
-            gray(&format!("in {:.2?}", elapsed))
-        ),
+        "dynamic" => println!("{} {} {} {} {} {}", blue("[Titan]"), green(&format!("{} {}", method, path)), white("→"), green(&route_label), white("(dynamic)"), gray(&format!("in {:.2?}", elapsed))),
+        "exact" => println!("{} {} {} {} {}", blue("[Titan]"), white(&format!("{} {}", method, path)), white("→"), yellow(&route_label), gray(&format!("in {:.2?}", elapsed))),
         _ => {}
     }
 
@@ -331,29 +288,31 @@ async fn dynamic_handler_inner(
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
+    init_v8(); // Init platform once
 
-    // Load routes.json (expected at runtime root)
+    // Load routes.json
     let raw = fs::read_to_string("./routes.json").unwrap_or_else(|_| "{}".to_string());
     let json: Value = serde_json::from_str(&raw).unwrap_or_default();
 
     let port = json["__config"]["port"].as_u64().unwrap_or(3000);
     let routes_json = json["routes"].clone();
-    let map: HashMap<String, RouteVal> =
-    serde_json::from_value(routes_json).unwrap_or_default();
+    let map: HashMap<String, RouteVal> = serde_json::from_value(routes_json).unwrap_or_default();
+    let dynamic_routes: Vec<DynamicRoute> = serde_json::from_value(json["__dynamic_routes"].clone()).unwrap_or_default();
 
-    let dynamic_routes: Vec<DynamicRoute> =
-    serde_json::from_value(json["__dynamic_routes"].clone())
-        .unwrap_or_default();
-
-    // Project root — heuristics: try current_dir()
-    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Project root — heuristics
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Ensure we find the 'app' directory as sibling if running from 'server'
+    let project_root = if cwd.join("../app").exists() {
+        cwd.join("../app")
+    } else {
+        cwd
+    };
 
     let state = AppState {
         routes: Arc::new(map),
         dynamic_routes: Arc::new(dynamic_routes),
         project_root,
     };
-    
 
     let app = Router::new()
         .route("/", any(root_route))
@@ -362,7 +321,6 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
-    // Banner (yellow-orange) and server info
     println!("\n\x1b[38;5;208m████████╗██╗████████╗ █████╗ ███╗   ██╗");
     println!("╚══██╔══╝██║╚══██╔══╝██╔══██╗████╗  ██║");
     println!("   ██║   ██║   ██║   ███████║██╔██╗ ██║");

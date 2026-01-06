@@ -16,15 +16,15 @@ export async function bundle() {
     fs.unlinkSync(path.join(outDir, file));
   }
 
-  const files = fs.readdirSync(actionsDir).filter(f => f.endsWith(".js"));
+  const files = fs.readdirSync(actionsDir).filter(f => f.endsWith(".js") || f.endsWith(".ts"));
 
   for (const file of files) {
-    const actionName = path.basename(file, ".js");
+    const actionName = path.basename(file, path.extname(file));
 
     const entry = path.join(actionsDir, file);
 
     // Rust runtime expects `.jsbundle` extension — consistent with previous design
-    const outfile = path.join(outDir, file.replace(".js", ".jsbundle"));
+    const outfile = path.join(outDir, actionName + ".jsbundle");
 
     console.log(`[Titan] Bundling ${entry} → ${outfile}`);
 
@@ -36,6 +36,9 @@ export async function bundle() {
       globalName: "__titan_exports",
       platform: "neutral",
       target: "es2020",
+      banner: {
+        js: "const defineAction = (fn) => fn;"
+      },
 
       footer: {
         js: `

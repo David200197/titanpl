@@ -10,10 +10,35 @@ const __dirname = path.dirname(__filename);
 
 let serverProcess = null;
 
-function startRustServer() {
-    if (serverProcess) {
+async function killServer() {
+    if (!serverProcess) return;
+
+    const pid = serverProcess.pid;
+    const killPromise = new Promise((resolve) => {
+        if (serverProcess.exitCode !== null) return resolve();
+        serverProcess.once("close", resolve);
+        // Fallback timeout in case close never fires? 
+        // usually close fires after kill.
+    });
+
+    if (process.platform === "win32") {
+        try {
+            execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
+        } catch (e) {
+            // Ignore errors if process is already dead
+        }
+    } else {
         serverProcess.kill();
     }
+
+    try {
+        await killPromise;
+    } catch (e) { }
+    serverProcess = null;
+}
+
+async function startRustServer() {
+    await killServer();
 
     const serverPath = path.join(process.cwd(), "server");
 
@@ -24,6 +49,10 @@ function startRustServer() {
     });
 
     serverProcess.on("close", (code) => {
+        if (code !== null && code !== 0 && code !== 1) {
+            // 1 is often just 'terminated' on windows if forced, but also error.
+            // We just log it.
+        }
         console.log(`[Titan] Rust server exited: ${code}`);
     });
 }
@@ -40,8 +69,12 @@ async function startDev() {
     console.log("[Titan] Dev mode starting...");
 
     // FIRST BUILD
-    await rebuild();
-    startRustServer();
+    try {
+        await rebuild();
+        await startRustServer();
+    } catch (e) {
+        console.log("\x1b[31m[Titan] Initial build failed. Waiting for changes...\x1b[0m");
+    }
 
     const watcher = chokidar.watch("app", {
         ignoreInitial: true
@@ -55,10 +88,13 @@ async function startDev() {
         timer = setTimeout(async () => {
             console.log(`[Titan] Change detected: ${file}`);
 
-            await rebuild();
-
-            console.log("[Titan] Restarting Rust server...");
-            startRustServer();
+            try {
+                await rebuild();
+                console.log("[Titan] Restarting Rust server...");
+                await startRustServer();
+            } catch (e) {
+                console.log("\x1b[31m[Titan] Build failed -- waiting for changes...\x1b[0m");
+            }
 
         }, 200);
     });
