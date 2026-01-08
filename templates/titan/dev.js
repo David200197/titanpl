@@ -39,6 +39,9 @@ async function killServer() {
 async function startRustServer() {
     await killServer();
 
+    // Give the OS a moment to release file locks on the binary
+    await new Promise(r => setTimeout(r, 500));
+
     const serverPath = path.join(process.cwd(), "server");
 
     serverProcess = spawn("cargo", ["run"], {
