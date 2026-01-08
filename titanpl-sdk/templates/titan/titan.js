@@ -49,6 +49,9 @@ const t = {
     return addRoute("POST", route);
   },
 
+  log(module, msg) {
+    console.log(`[\x1b[35m${module}\x1b[0m] ${msg}`);
+  },
 
   async start(port = 3000, msg = "") {
     console.log(cyan("[Titan] Bundling actions..."));
@@ -80,4 +83,5 @@ const t = {
   }
 };
 
+globalThis.t = t;
 export default t;

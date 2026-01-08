@@ -1,12 +1,12 @@
 {
-    "name": "titan-sdk",
-    "version": "0.0.6",
+    "name": "titanpl-sdk",
+    "version": "0.0.7",
     "description": "Development SDK for Titan Planet. Provides TypeScript type definitions for the global 't' runtime object and a 'lite' test-harness runtime for building and verifying extensions.",
     "main": "index.js",
     "type": "module",
     "types": "index.d.ts",
     "bin": {
-        "titan-sdk": "./bin/run.js"
+        "titanpl-sdk": "./bin/run.js"
     },
     "files": [
         "bin/",
@@ -19,7 +19,7 @@
     "keywords": [
         "titan",
         "titan-planet",
-        "titan-sdk",
+        "titanpl-sdk",
         "ezetgalaxy",
         "types",
         "typescript",

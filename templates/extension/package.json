@@ -8,13 +8,13 @@
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "keywords": [
-        "titan",
+        "titan planet",
         "extension"
     ],
     "author": "",
     "license": "ISC",
     "dependencies": {
-        "titan-sdk": "latest",
+        "titanpl-sdk": "latest",
         "chokidar": "^5.0.0",
         "esbuild": "^0.27.2"
     }
