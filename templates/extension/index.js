@@ -8,7 +8,8 @@ const EXT_KEY = "{{name}}";
 
 t.log(EXT_KEY, "Extension loading...");
 
-t[EXT_KEY] = {
+// Preserve any native functions already attached to this key
+t[EXT_KEY] = Object.assign(t[EXT_KEY] || {}, {
     // Example pure JavaScript function
     hello: function (name) {
         t.log(EXT_KEY, `Hello ${name} from ${EXT_KEY}!`);
@@ -21,6 +22,6 @@ t[EXT_KEY] = {
         // Assumes the native function 'add' is mapped in titan.json
         return t[EXT_KEY].add(a, b);
     }
-};
+});
 
 t.log(EXT_KEY, "Extension loaded!");

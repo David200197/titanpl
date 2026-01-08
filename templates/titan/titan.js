@@ -49,6 +49,10 @@ const t = {
     return addRoute("POST", route);
   },
 
+  log(module, msg) {
+    console.log(`[\x1b[35m${module}\x1b[0m] ${msg}`);
+  },
+
   async start(port = 3000, msg = "") {
     try {
       console.log(cyan("[Titan] Preparing runtime..."));

@@ -56,9 +56,22 @@ function run() {
     // 3. Create a Test Harness (Mini Titan Project)
     const runDir = path.join(cwd, ".titan_test_run");
     if (fs.existsSync(runDir)) {
-        fs.rmSync(runDir, { recursive: true, force: true });
+        try {
+            fs.rmSync(runDir, {
+                recursive: true,
+                force: true,
+                maxRetries: 10,
+                retryDelay: 100
+            });
+        } catch (e) {
+            console.log(yellow(`Warning: Could not fully clean ${runDir}. Proceeding anyway...`));
+        }
     }
-    fs.mkdirSync(runDir);
+
+    // Ensure runDir exists (sometimes rmSync + mkdirSync fails on Windows due to locks)
+    if (!fs.existsSync(runDir)) {
+        fs.mkdirSync(runDir, { recursive: true });
+    }
 
     // Create app structure
     const appDir = path.join(runDir, "app");
@@ -74,7 +87,13 @@ function run() {
     const titanSrc = path.join(templatesDir, "titan");
     const titanDest = path.join(runDir, "titan");
     if (fs.existsSync(titanSrc)) {
+        console.log(cyan("→ Setting up Titan runtime..."));
         copyDir(titanSrc, titanDest);
+        // Double check titan.js exists
+        if (!fs.existsSync(path.join(titanDest, "titan.js"))) {
+            console.log(red(`Error: Failed to copy titan.js to ${titanDest}`));
+            process.exit(1);
+        }
     } else {
         console.log(red(`Error: Titan templates not found at ${titanSrc}`));
         process.exit(1);
@@ -83,6 +102,7 @@ function run() {
     const serverSrc = path.join(templatesDir, "server");
     const serverDest = path.join(runDir, "server");
     if (fs.existsSync(serverSrc)) {
+        console.log(cyan("→ Setting up Titan server..."));
         copyDir(serverSrc, serverDest);
     } else {
         console.log(red(`Error: Server templates not found at ${serverSrc}`));
@@ -146,6 +166,7 @@ function run() {
     // Create a simple test script in app/app.js
     // This script will be executed by Titan
     const testScript = `import t from "../titan/titan.js";
+import "${name}";
 
 // Extension test harness for: ${name}
 const ext = t["${name}"];
@@ -202,9 +223,20 @@ await t.start(3000, "Titan Extension Test Running!");
     // Build the app (bundle actions)
     console.log(cyan("Building test app..."));
     try {
-        execSync("node app/app.js --build", { cwd: runDir, stdio: "inherit" });
+        // Ensure we are in runDir and the file exists
+        const appJsPath = path.join(runDir, "app", "app.js");
+        if (!fs.existsSync(appJsPath)) {
+            throw new Error(`app/app.js missing at ${appJsPath}`);
+        }
+
+        execSync("node app/app.js --build", {
+            cwd: runDir,
+            stdio: "inherit",
+            env: { ...process.env, NODE_OPTIONS: "--no-warnings" }
+        });
     } catch (e) {
-        console.log(red("Failed to build test app."));
+        console.log(red("Failed to build test app. This is expected if your extension has errors."));
+        // Don't exit here, attempt to continue to show runtime errors if possible
     }
 
     // 4. Run Titan Server using cargo run (like dev mode)

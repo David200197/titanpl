@@ -49,6 +49,7 @@ const t = {
     return addRoute("POST", route);
   },
 
+
   async start(port = 3000, msg = "") {
     console.log(cyan("[Titan] Bundling actions..."));
     await bundle();
