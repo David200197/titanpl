@@ -464,107 +464,22 @@ Next steps:
 }
 
 function runExtension() {
-    const cwd = process.cwd();
-    const manifestPath = path.join(cwd, "titan.json");
-
-    if (!fs.existsSync(manifestPath)) {
-        console.log(red("Error: titan.json not found. Are you in an extension folder?"));
-        return;
-    }
-
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    const name = manifest.name;
-    console.log(cyan(`Preparing to run extension: ${name}`));
-
-    // 1. Build Native if exists
-    const nativeDir = path.join(cwd, "native");
-    if (fs.existsSync(nativeDir)) {
-        console.log(cyan("Building native module..."));
-        try {
-            execSync("cargo build --release", { cwd: nativeDir, stdio: "inherit" });
-        } catch (e) {
-            console.log(red("Native build failed."));
-            return;
-        }
-    }
-
-    // 2. Setup Temporary Runner
-    const runnerDir = path.join(cwd, ".titan_runner");
-    if (fs.existsSync(runnerDir)) {
-        fs.rmSync(runnerDir, { recursive: true, force: true });
-    }
-
-    // We need to create a project environment. 
-    // We can use the templates stored in __dirname
-    const templateDir = path.join(__dirname, "templates");
-
-    console.log(cyan("Setting up test harness..."));
-    fs.mkdirSync(runnerDir);
-
-    // Copy templates/app -> runner/app
-    const runnerApp = path.join(runnerDir, "app");
-    copyDir(path.join(templateDir, "app"), runnerApp);
-
-    // Copy templates/server -> runner/server
-    const runnerServer = path.join(runnerDir, "server");
-    copyDir(path.join(templateDir, "server"), runnerServer);
-
-    // Create a dummy app.js that uses the extension
-    const appJsContent = `
-    const extensionName = "${name}";
-    t.log("TestRunner", "Loading extension: " + extensionName);
+    const localSdk = path.join(__dirname, "titan-sdk", "bin", "run.js");
     
-    // Access the extension
-    if (t[extensionName]) {
-        t.log("TestRunner", "Extension found on 't'!");
-        if (t[extensionName].hello) {
-             t[extensionName].hello("Titan User");
-        }
-        if (t[extensionName].calc) {
-             const res = t[extensionName].calc(10, 50);
-             t.log("TestRunner", "Calc Result (10+50): " + res);
+    if (fs.existsSync(localSdk)) {
+        console.log(cyan("[Titan] Using local SDK runner..."));
+        try {
+            execSync(`node "${localSdk}"`, { stdio: "inherit" });
+        } catch (e) {
+            // SDK runner handles its own errors
         }
     } else {
-        t.log("TestRunner", "ERROR: Extension not found on 't'");
-    }
-    `;
-    fs.writeFileSync(path.join(runnerApp, "app.js"), appJsContent);
-
-    // 3. Link Extension
-    // We need to simulate 'node_modules/extension_name'
-    const runnerNodeModules = path.join(runnerDir, "node_modules");
-    fs.mkdirSync(runnerNodeModules, { recursive: true });
-
-    const extLinkPath = path.join(runnerNodeModules, name);
-    // On Windows, symlinks require special permissions, usually. 
-    // Junctions are safer for directories.
-    try {
-        fs.symlinkSync(cwd, extLinkPath, "junction");
-    } catch (e) {
-        // Fallback to copy if symlink fails
-        console.log(yellow("Symlink failed, copying extension..."));
-        copyDir(cwd, extLinkPath);
-    }
-
-    console.log(cyan("Building test harness server... (this may take a minute)"));
-    try {
-        execSync("cargo build --release", { cwd: runnerServer, stdio: "inherit" });
-    } catch (e) {
-        console.log(red("Failed to build test server."));
-        return;
-    }
-
-    // 5. Run it
-    const isWin = process.platform === "win32";
-    const bin = isWin ? "titan-server.exe" : "titan-server";
-    const exe = path.join(runnerServer, "target", "release", bin);
-
-    console.log(bold(green("\n>>> STARTING EXTENSION TEST >>>\n")));
-    try {
-        // Run inside the runner directory so it finds app/, server/, etc.
-        execSync(`"${exe}"`, { cwd: runnerDir, stdio: "inherit" });
-    } catch (e) {
-        console.log(red("\nTest ended with error or was stopped."));
+        console.log(cyan("[Titan] SDK not found locally, falling back to npx..."));
+        try {
+            execSync("npx -y titan-sdk", { stdio: "inherit" });
+        } catch (e) {
+            // SDK runner handles its own errors
+        }
     }
 }
 

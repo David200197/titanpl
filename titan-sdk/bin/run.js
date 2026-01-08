@@ -13,6 +13,19 @@ const green = (t) => `\x1b[32m${t}\x1b[0m`;
 const red = (t) => `\x1b[31m${t}\x1b[0m`;
 const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
 
+function copyDir(src, dest) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const file of fs.readdirSync(src)) {
+        const srcPath = path.join(src, file);
+        const destPath = path.join(dest, file);
+        if (fs.lstatSync(srcPath).isDirectory()) {
+            copyDir(srcPath, destPath);
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+        }
+    }
+}
+
 function run() {
     console.log(cyan("Titan SDK: Test Runner"));
 
@@ -56,19 +69,24 @@ function run() {
     fs.mkdirSync(actionsDir);
 
     // Copy titan/ and server/ from templates
-    const repoRoot = path.resolve(__dirname, "..", "..");
-    const templatesDir = path.join(repoRoot, "templates");
+    const templatesDir = path.join(__dirname, "..", "templates");
 
     const titanSrc = path.join(templatesDir, "titan");
     const titanDest = path.join(runDir, "titan");
     if (fs.existsSync(titanSrc)) {
-        fs.cpSync(titanSrc, titanDest, { recursive: true });
+        copyDir(titanSrc, titanDest);
+    } else {
+        console.log(red(`Error: Titan templates not found at ${titanSrc}`));
+        process.exit(1);
     }
 
     const serverSrc = path.join(templatesDir, "server");
     const serverDest = path.join(runDir, "server");
     if (fs.existsSync(serverSrc)) {
-        fs.cpSync(serverSrc, serverDest, { recursive: true });
+        copyDir(serverSrc, serverDest);
+    } else {
+        console.log(red(`Error: Server templates not found at ${serverSrc}`));
+        process.exit(1);
     }
 
     // Create package.json for the test harness
@@ -89,7 +107,7 @@ function run() {
     } catch (e) {
         // Fallback to copy if link fails
         console.log(yellow("Linking failed, copying extension files..."));
-        fs.cpSync(cwd, extDest, { recursive: true });
+        copyDir(cwd, extDest);
     }
 
     // Create a test action in app/actions/test.js
@@ -138,7 +156,6 @@ console.log("---------------------------------------------------");
 
 if (!ext) {
     console.log("ERROR: Extension '${name}' not found in global 't'.");
-    console.log("Make sure your extension's package.json has 'type': 'commonjs'");
 } else {
     console.log("✓ Extension loaded successfully!");
     console.log("✓ Available methods:", Object.keys(ext).join(", "));
@@ -177,7 +194,7 @@ console.log("---------------------------------------------------\\n");
 t.get("/test").action("test");
 t.get("/").reply("🚀 Extension Test Harness for ${name}\\n\\nVisit /test to see extension test results");
 
-t.start(3000, "Titan Extension Test Running!");
+await t.start(3000, "Titan Extension Test Running!");
 `;
 
     fs.writeFileSync(path.join(appDir, "app.js"), testScript);
@@ -188,11 +205,10 @@ t.start(3000, "Titan Extension Test Running!");
         execSync("node app/app.js --build", { cwd: runDir, stdio: "inherit" });
     } catch (e) {
         console.log(red("Failed to build test app."));
-        console.log(yellow("This is expected if your extension has errors."));
     }
 
     // 4. Run Titan Server using cargo run (like dev mode)
-    console.log(cyan("Starting Titan Runtime..."));
+    console.log(green("\x1b[1m\n>>> STARTING EXTENSION TEST >>>\n\x1b[0m"));
 
     const serverDir = path.join(runDir, "server");
 
