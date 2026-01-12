@@ -139,7 +139,7 @@ function initProject(name) {
     // ----------------------------------------------------------
     // 1. Copy full template directory (excluding extension folder)
     // ----------------------------------------------------------
-    copyDir(templateDir, target, ["extension"]);
+    copyDir(templateDir, target, ["extension", "_gitignore", "_dockerignore"]);
 
     // ----------------------------------------------------------
     // 2. Explicitly install dotfiles
