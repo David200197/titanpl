@@ -17,22 +17,9 @@
 ---
 
 # TITAN PLANET 🚀 
-<a href="https://github.com/ezet-galaxy/titanpl">
-<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20" role="img" aria-label="npm: v26.7.4">
-    <title>npm: v26.7.4</title>
-    <g shape-rendering="crispEdges">
-        <rect width="35" height="20" fill="#555" />
-        <rect x="35" width="53" height="20" fill="#007ec6" />
-    </g>
-    <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif"
-        text-rendering="geometricPrecision" font-size="110">
-        <text x="185" y="140" transform="scale(.1)" fill="#fff" textLength="250">npm</text>
-        <text x="605" y="140" transform="scale(.1)" fill="#fff" textLength="430">v26.7.4</text>
-    </g>
-    <script xmlns="" />
-    <script xmlns="" />
-</svg>
-</a>
+
+[![npm version](https://img.shields.io/npm/v/@ezetgalaxy/titan.svg?style=flat-square)](https://www.npmjs.com/package/@ezetgalaxy/titan)
+
 
 **JavaScript Simplicity. Rust Power. Zero Configuration.**
 
