@@ -5,29 +5,60 @@ import fs from "fs";
 import { bundle } from "./bundle.js";
 
 // ============================================================
-// Estado global del servidor
+// Global Server State
 // ============================================================
+
+/** @type {import('child_process').ChildProcess | null} */
 let serverProcess = null;
+
+/** @type {boolean} */
 let isKilling = false;
 
 // ============================================================
-// Constantes de configuración
+// Configuration Constants
 // ============================================================
+
+/** Time to wait before retrying after a crash (ms) */
 const RETRY_WAIT_TIME = 2000;
+
+/** Standard wait time before starting server (ms) */
 const STANDARD_WAIT_TIME = 1000;
+
+/** Maximum time to wait for process to be killed (ms) */
 const KILL_TIMEOUT = 3000;
+
+/** Time window to detect rapid crashes (ms) */
 const CRASH_DETECTION_WINDOW = 10000;
+
+/** Maximum number of automatic retry attempts */
 const MAX_RETRY_ATTEMPTS = 3;
+
+/** Debounce delay for file watcher (ms) */
 const DEBOUNCE_DELAY = 500;
 
 // ============================================================
-// Detección de entrada de aplicación
+// Application Entry Detection
 // ============================================================
 
 /**
- * Detect if project uses TypeScript or JavaScript
- * @param {string} root - Project root directory
- * @returns {{ path: string, isTS: boolean } | null}
+ * Entry point information for the application.
+ * @typedef {Object} AppEntry
+ * @property {string} path - Absolute path to the entry file
+ * @property {boolean} isTS - Whether the entry file is TypeScript
+ */
+
+/**
+ * Detects whether the project uses TypeScript or JavaScript as its entry point.
+ * Checks for `app/app.ts` first, then falls back to `app/app.js`.
+ *
+ * @param {string} [root=process.cwd()] - Project root directory
+ * @returns {AppEntry | null} Entry point information, or null if no entry file found
+ *
+ * @example
+ * const entry = getAppEntry('/path/to/project');
+ * if (entry?.isTS) {
+ *   console.log('TypeScript project detected');
+ * }
  */
 export function getAppEntry(root = process.cwd()) {
     const tsEntry = path.join(root, "app", "app.ts");
@@ -45,13 +76,20 @@ export function getAppEntry(root = process.cwd()) {
 }
 
 // ============================================================
-// Compilación de TypeScript
+// TypeScript/JavaScript Compilation
 // ============================================================
 
 /**
- * Create esbuild plugin to handle titan.js imports
+ * Creates an esbuild plugin that marks titan.js imports as external.
+ * This prevents esbuild from bundling the titan.js file, allowing it
+ * to be resolved at runtime.
+ *
  * @param {string} titanJsAbsolutePath - Absolute path to titan.js
- * @returns {object} esbuild plugin
+ * @returns {import('esbuild').Plugin} esbuild plugin configuration
+ *
+ * @example
+ * const plugin = createTitanExternalPlugin('/project/titan/titan.js');
+ * await esbuild.build({ plugins: [plugin] });
  */
 function createTitanExternalPlugin(titanJsAbsolutePath) {
     return {
@@ -66,11 +104,12 @@ function createTitanExternalPlugin(titanJsAbsolutePath) {
 }
 
 /**
- * Get esbuild configuration
- * @param {string} entryPath - Entry file path
- * @param {string} outFile - Output file path
- * @param {object} titanPlugin - Titan external plugin
- * @returns {object} esbuild build options
+ * Generates the esbuild configuration for TypeScript compilation.
+ *
+ * @param {string} entryPath - Path to the entry file
+ * @param {string} outFile - Path for the compiled output file
+ * @param {import('esbuild').Plugin} titanPlugin - Titan external plugin instance
+ * @returns {import('esbuild').BuildOptions} esbuild build configuration
  */
 function getEsbuildConfig(entryPath, outFile, titanPlugin) {
     return {
@@ -92,9 +131,11 @@ function getEsbuildConfig(entryPath, outFile, titanPlugin) {
 }
 
 /**
- * Find the first non-comment line index in code
+ * Finds the index of the first non-comment, non-empty line in the code.
+ * Used to determine where to inject import statements.
+ *
  * @param {string[]} lines - Array of code lines
- * @returns {number} Index of first non-comment line
+ * @returns {number} Index of the first code line (0 if none found)
  */
 function findFirstCodeLineIndex(lines) {
     for (let i = 0; i < lines.length; i++) {
@@ -107,11 +148,18 @@ function findFirstCodeLineIndex(lines) {
 }
 
 /**
- * Inject titan.js import into compiled code if missing
- * @param {string} compiled - Compiled code
- * @param {string} titanJsAbsolutePath - Path to titan.js
- * @param {string} outFile - Output file path
- * @returns {string} Modified compiled code
+ * Injects the titan.js import statement into compiled code if missing.
+ * This enables the global `t` variable usage pattern without explicit imports.
+ *
+ * @param {string} compiled - Compiled JavaScript code
+ * @param {string} titanJsAbsolutePath - Absolute path to titan.js
+ * @param {string} outFile - Output file path (will be overwritten if modified)
+ * @returns {string} Modified code with titan.js import, or original if already present
+ *
+ * @example
+ * // If compiled code uses `t.post()` but has no import:
+ * const modified = injectTitanImportIfMissing(code, '/project/titan/titan.js', outPath);
+ * // Result: import t from "/project/titan/titan.js"; prepended
  */
 function injectTitanImportIfMissing(compiled, titanJsAbsolutePath, outFile) {
     if (compiled.includes("titan.js")) {
@@ -133,8 +181,9 @@ function injectTitanImportIfMissing(compiled, titanJsAbsolutePath, outFile) {
 }
 
 /**
- * Log preview of compiled output
- * @param {string} compiled - Compiled code
+ * Logs a preview of the first 5 lines of compiled output for debugging.
+ *
+ * @param {string} compiled - Compiled JavaScript code
  */
 function logCompiledPreview(compiled) {
     console.log("[Titan] Compiled output preview:");
@@ -143,8 +192,10 @@ function logCompiledPreview(compiled) {
 }
 
 /**
- * Verify that import statement exists in compiled output
- * @param {string} compiled - Compiled code
+ * Verifies that the compiled output contains the required import statement.
+ * Logs a warning if the import appears to be missing.
+ *
+ * @param {string} compiled - Compiled JavaScript code
  */
 function verifyImportExists(compiled) {
     if (!compiled.includes("import") || !compiled.includes("titan.js")) {
@@ -154,11 +205,25 @@ function verifyImportExists(compiled) {
 }
 
 /**
- * Compile TypeScript entry file
- * @param {string} root - Project root
- * @param {string} entryPath - Entry file path
- * @param {boolean} skipExec - Whether to skip execution
- * @returns {Promise<{ outFile: string, compiled: string }>}
+ * Compilation result containing output file path and compiled code.
+ * @typedef {Object} CompilationResult
+ * @property {string} outFile - Path to the compiled output file
+ * @property {string} compiled - The compiled JavaScript code
+ */
+
+/**
+ * Compiles a TypeScript entry file using esbuild.
+ * Handles directory setup, compilation, import injection, and optional execution.
+ *
+ * @param {string} root - Project root directory
+ * @param {string} entryPath - Path to the TypeScript entry file
+ * @param {boolean} skipExec - If true, skip executing the compiled output
+ * @returns {Promise<CompilationResult>} Compilation result with output path and code
+ * @throws {Error} If esbuild compilation fails
+ *
+ * @example
+ * const result = await compileTypeScript('/project', '/project/app/app.ts', false);
+ * console.log('Compiled to:', result.outFile);
  */
 async function compileTypeScript(root, entryPath, skipExec) {
     console.log("[Titan] Compiling app.ts with esbuild...");
@@ -198,11 +263,18 @@ async function compileTypeScript(root, entryPath, skipExec) {
 }
 
 /**
- * Process JavaScript entry file through esbuild (same as TypeScript)
- * @param {string} root - Project root
- * @param {string} entryPath - Entry file path
- * @param {boolean} skipExec - Whether to skip execution
- * @returns {Promise<{ outFile: string, compiled: string }>}
+ * Bundles a JavaScript entry file using esbuild.
+ * Processes the file through esbuild to resolve imports and inject titan.js dependency.
+ *
+ * @param {string} root - Project root directory
+ * @param {string} entryPath - Path to the JavaScript entry file
+ * @param {boolean} skipExec - If true, skip executing the bundled output
+ * @returns {Promise<CompilationResult>} Compilation result with output path and code
+ * @throws {Error} If esbuild bundling fails
+ *
+ * @example
+ * const result = await processJavaScript('/project', '/project/app/app.js', false);
+ * console.log('Bundled to:', result.outFile);
  */
 async function processJavaScript(root, entryPath, skipExec) {
     console.log("[Titan] Bundling app.js with esbuild...");
@@ -250,11 +322,28 @@ async function processJavaScript(root, entryPath, skipExec) {
 }
 
 /**
- * Compile TypeScript app.ts to JavaScript using esbuild
- * @param {string} root - Project root directory
- * @param {object} options - Compilation options
- * @param {boolean} options.skipExec - Skip execution after compilation
- * @returns {Promise<{ outFile: string, compiled: string | null }>}
+ * Options for compiling and running the application entry point.
+ * @typedef {Object} CompileOptions
+ * @property {boolean} [skipExec=false] - Skip execution after compilation
+ */
+
+/**
+ * Compiles and optionally executes the application entry point.
+ * Automatically detects whether the project uses TypeScript or JavaScript
+ * and processes accordingly using esbuild.
+ *
+ * @param {string} [root=process.cwd()] - Project root directory
+ * @param {CompileOptions} [options] - Compilation options
+ * @returns {Promise<CompilationResult>} Compilation result with output path and code
+ * @throws {Error} If no app.ts or app.js found in the app/ directory
+ *
+ * @example
+ * // Compile and execute
+ * await compileAndRunAppEntry('/project');
+ *
+ * @example
+ * // Compile only, skip execution
+ * const result = await compileAndRunAppEntry('/project', { skipExec: true });
  */
 export async function compileAndRunAppEntry(root = process.cwd(), options = { skipExec: false }) {
     const { skipExec = false } = options;
@@ -272,12 +361,14 @@ export async function compileAndRunAppEntry(root = process.cwd(), options = { sk
 }
 
 // ============================================================
-// Gestión del servidor
+// Server Manager
 // ============================================================
 
 /**
- * Kill server process on Windows using taskkill
- * @param {number} pid - Process ID
+ * Forcefully terminates a process on Windows using taskkill.
+ * Silently ignores errors if the process is already dead.
+ *
+ * @param {number} pid - Process ID to kill
  */
 function killWindowsProcess(pid) {
     try {
@@ -288,9 +379,11 @@ function killWindowsProcess(pid) {
 }
 
 /**
- * Kill server process on Unix systems
- * @param {number} pid - Process ID
- * @param {object} serverProc - Server process object
+ * Terminates a process on Unix systems using SIGKILL.
+ * Attempts to kill the entire process group first, then falls back to direct kill.
+ *
+ * @param {number} pid - Process ID to kill
+ * @param {import('child_process').ChildProcess} serverProc - Server process object
  */
 function killUnixProcess(pid, serverProc) {
     try {
@@ -304,8 +397,11 @@ function killUnixProcess(pid, serverProc) {
 }
 
 /**
- * Wait for process to close with timeout
- * @param {Promise} killPromise - Promise that resolves when process closes
+ * Waits for a process to close with a timeout.
+ * Resolves when either the process closes or the timeout is reached.
+ *
+ * @param {Promise<void>} killPromise - Promise that resolves when process closes
+ * @returns {Promise<void>}
  */
 async function waitForProcessClose(killPromise) {
     try {
@@ -317,8 +413,15 @@ async function waitForProcessClose(killPromise) {
 }
 
 /**
- * Kill the running server process
- * @returns {Promise<void>}
+ * Kills the currently running server process.
+ * Handles both Windows and Unix systems appropriately.
+ * Sets the `isKilling` flag to prevent restart loops during intentional shutdown.
+ *
+ * @returns {Promise<void>} Resolves when the server is killed or timeout is reached
+ *
+ * @example
+ * await killServer();
+ * console.log('Server stopped');
  */
 export async function killServer() {
     if (!serverProcess) {
@@ -348,11 +451,14 @@ export async function killServer() {
 }
 
 /**
- * Handle server process close event
- * @param {number} code - Exit code
- * @param {number} startTime - Server start timestamp
- * @param {number} retryCount - Current retry count
- * @param {string} root - Project root
+ * Handles the server process close event.
+ * Implements automatic restart logic for crash detection within the time window.
+ *
+ * @param {number | null} code - Process exit code (null if terminated by signal)
+ * @param {number} startTime - Timestamp when the server was started
+ * @param {number} retryCount - Current retry attempt count
+ * @param {string} root - Project root directory
+ * @returns {Promise<void>}
  */
 async function handleServerClose(code, startTime, retryCount, root) {
     if (isKilling) {
@@ -374,9 +480,10 @@ async function handleServerClose(code, startTime, retryCount, root) {
 }
 
 /**
- * Get spawn options for cargo process
- * @param {string} serverPath - Path to server directory
- * @returns {object} Spawn options
+ * Generates spawn options for the cargo process.
+ *
+ * @param {string} serverPath - Path to the server directory containing Cargo.toml
+ * @returns {import('child_process').SpawnOptions} Spawn options for cargo
  */
 function getCargoSpawnOptions(serverPath) {
     return {
@@ -389,10 +496,20 @@ function getCargoSpawnOptions(serverPath) {
 }
 
 /**
- * Start the Rust server
- * @param {number} retryCount - Number of retry attempts
- * @param {string} root - Project root directory
- * @returns {Promise<object>} Spawned process
+ * Starts the Rust server using cargo run.
+ * Automatically kills any existing server instance before starting.
+ * Implements retry logic for handling file lock issues on Windows.
+ *
+ * @param {number} [retryCount=0] - Current retry attempt (used internally for crash recovery)
+ * @param {string} [root=process.cwd()] - Project root directory
+ * @returns {Promise<import('child_process').ChildProcess>} The spawned server process
+ *
+ * @example
+ * const server = await startRustServer();
+ *
+ * @example
+ * // Manual retry after failure
+ * const server = await startRustServer(1, '/project');
  */
 export async function startRustServer(retryCount = 0, root = process.cwd()) {
     const waitTime = retryCount > 0 ? RETRY_WAIT_TIME : STANDARD_WAIT_TIME;
@@ -420,13 +537,21 @@ export async function startRustServer(retryCount = 0, root = process.cwd()) {
 }
 
 // ============================================================
-// Build y recarga
+// Build and Reload
 // ============================================================
 
 /**
- * Rebuild the project (compile and bundle)
- * @param {string} root - Project root directory
+ * Rebuilds the entire project.
+ * Regenerates routes.json and action_map.json by compiling and executing the app entry,
+ * then bundles all JavaScript actions.
+ *
+ * @param {string} [root=process.cwd()] - Project root directory
  * @returns {Promise<void>}
+ * @throws {Error} If compilation or bundling fails
+ *
+ * @example
+ * await rebuild('/project');
+ * console.log('Project rebuilt successfully');
  */
 export async function rebuild(root = process.cwd()) {
     console.log("[Titan] Regenerating routes.json & action_map.json...");
@@ -437,12 +562,13 @@ export async function rebuild(root = process.cwd()) {
 }
 
 // ============================================================
-// Modo desarrollo
+// Development Mode
 // ============================================================
 
 /**
- * Log project detection info
- * @param {object} entry - App entry info
+ * Logs the detected project type (TypeScript or JavaScript).
+ *
+ * @param {AppEntry | null} entry - Application entry point information
  */
 function logProjectDetection(entry) {
     if (entry) {
@@ -452,8 +578,9 @@ function logProjectDetection(entry) {
 }
 
 /**
- * Log environment configuration status
- * @param {string} root - Project root
+ * Logs the environment configuration status if .env file exists.
+ *
+ * @param {string} root - Project root directory
  */
 function logEnvStatus(root) {
     if (fs.existsSync(path.join(root, ".env"))) {
@@ -462,8 +589,11 @@ function logEnvStatus(root) {
 }
 
 /**
- * Perform initial build
- * @param {string} root - Project root
+ * Performs the initial project build and starts the server.
+ * Gracefully handles build failures and waits for file changes.
+ *
+ * @param {string} root - Project root directory
+ * @returns {Promise<void>}
  */
 async function performInitialBuild(root) {
     try {
@@ -476,9 +606,12 @@ async function performInitialBuild(root) {
 }
 
 /**
- * Handle file change event
- * @param {string} file - Changed file path
- * @param {string} root - Project root
+ * Handles file change events from the watcher.
+ * Rebuilds the project and restarts the server on each change.
+ *
+ * @param {string} file - Path to the changed file
+ * @param {string} root - Project root directory
+ * @returns {Promise<void>}
  */
 async function handleFileChange(file, root) {
     if (file.includes(".env")) {
@@ -498,15 +631,18 @@ async function handleFileChange(file, root) {
 }
 
 /**
- * Create file watcher with debounced change handler
- * @param {string} root - Project root
- * @returns {object} Chokidar watcher instance
+ * Creates a file watcher with debounced change handling.
+ * Watches the `app/` directory and `.env` file for changes.
+ *
+ * @param {string} root - Project root directory
+ * @returns {import('chokidar').FSWatcher} Chokidar watcher instance
  */
 function createFileWatcher(root) {
     const watcher = chokidar.watch(["app", ".env"], {
         ignoreInitial: true,
     });
 
+    /** @type {NodeJS.Timeout | null} */
     let timer = null;
 
     watcher.on("all", async (event, file) => {
@@ -521,8 +657,17 @@ function createFileWatcher(root) {
 }
 
 /**
- * Start development server with hot reload
- * @returns {Promise<object>} Chokidar watcher instance
+ * Starts the development server with hot reload capability.
+ * Performs initial build, starts the Rust server, and watches for file changes.
+ *
+ * @returns {Promise<import('chokidar').FSWatcher>} The file watcher instance
+ *
+ * @example
+ * const watcher = await startDev();
+ * // Development server is now running with hot reload
+ *
+ * // To stop watching:
+ * await watcher.close();
  */
 export async function startDev() {
     console.log("[Titan] Dev mode starting...");
@@ -539,11 +684,14 @@ export async function startDev() {
 }
 
 // ============================================================
-// Manejo de señales de salida
+// Exit Signal Handling
 // ============================================================
 
 /**
- * Handle graceful exit on SIGINT/SIGTERM
+ * Handles graceful shutdown on SIGINT (Ctrl+C) or SIGTERM signals.
+ * Ensures the server process is properly terminated before exiting.
+ *
+ * @returns {Promise<never>} Never returns; exits the process
  */
 async function handleExit() {
     console.log("\n[Titan] Stopping server...");
@@ -555,7 +703,7 @@ process.on("SIGINT", handleExit);
 process.on("SIGTERM", handleExit);
 
 // ============================================================
-// Auto-inicio en modo desarrollo
+// Auto-start in Development Mode
 // ============================================================
 
 const isMainModule = process.argv[1]?.endsWith('dev.js');
@@ -564,7 +712,7 @@ if (isMainModule && !process.env.VITEST) {
 }
 
 // ============================================================
-// Exports para testing
+// Exports for Testing
 // ============================================================
 
 export { serverProcess, isKilling };
