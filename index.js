@@ -204,14 +204,16 @@ function buildProjectPaths(root) {
 /**
  * Builds template directory paths.
  * @param {string} [templateType="js"] - Tipo de plantilla (js, ts o rust)
- * @returns {{ templatesRoot: string, templateBase: string, templateTitan: string, templateServer: string, templateExtension: string }}
+ * @returns {{ templatesRoot: string, templateCommon: string, templateBase: string, templateTitan: string, templateServer: string, templateExtension: string }}
  */
 function buildTemplatePaths(templateType = "js") {
     const templatesRoot = path.join(__dirname, "templates");
+    const templateCommon = path.join(templatesRoot, "common");
     const templateBase = path.join(templatesRoot, templateType);
 
     return {
         templatesRoot,
+        templateCommon,
         templateBase,
         templateTitan: path.join(templateBase, "titan"),
         templateServer: path.join(templateBase, "server"),
@@ -379,26 +381,31 @@ function setupLanguageConfig(target, templateDir) {
 }
 
 /**
- * Copies dotfiles from template to project directory.
- * @param {string} templateDir - Template directory path.
+ * Copies dotfiles from common template to project directory.
+ * Transforms _gitignore → .gitignore and _dockerignore → .dockerignore
+ * Then removes the underscore-prefixed originals from target.
+ * @param {string} templateCommon - Common template directory path.
  * @param {string} target - Target project directory.
  */
-function copyDotfiles(templateDir, target) {
+function copyDotfiles(templateCommon, target) {
     const dotfiles = {
         "_gitignore": ".gitignore",
         "_dockerignore": ".dockerignore",
     };
 
     for (const [srcName, destName] of Object.entries(dotfiles)) {
-        const src = path.join(templateDir, srcName);
+        const src = path.join(templateCommon, srcName);
         const dest = path.join(target, destName);
 
         if (copyFileIfExists(src, dest)) {
             console.log(green(`✔ Added ${destName}`));
         }
+
+        // Eliminar el archivo con prefijo _ del destino (copiado por copyDir)
+        removeFileIfExists(path.join(target, srcName));
     }
 
-    const dockerfileSrc = path.join(templateDir, "Dockerfile");
+    const dockerfileSrc = path.join(templateCommon, "Dockerfile");
     copyFileIfExists(dockerfileSrc, path.join(target, "Dockerfile"));
 }
 
@@ -421,6 +428,7 @@ function installDependencies(target) {
 
 /**
  * Initializes a new Titan project with the specified name.
+ * Copies common template first, then the specific template (js/ts/rust).
  * @param {string} name - Project name/directory.
  */
 async function initProject(name) {
@@ -440,7 +448,12 @@ async function initProject(name) {
     }
 
     const target = path.join(process.cwd(), name);
-    const { templateBase } = buildTemplatePaths(templateType);
+    const { templateCommon, templateBase } = buildTemplatePaths(templateType);
+
+    if (!fs.existsSync(templateCommon)) {
+        console.log(red(`Common template not found at ${templateCommon}`));
+        return;
+    }
 
     if (!fs.existsSync(templateBase)) {
         console.log(red(`Template "${templateType}" not found at ${templateBase}`));
@@ -455,10 +468,11 @@ async function initProject(name) {
     console.log(cyan(`Creating Titan project → ${target}`));
     console.log(cyan(`Template: ${templateType}`));
 
-    copyDir(templateBase, target, ["extension"]);
+    copyDir(templateCommon, target);
+    copyDir(templateBase, target);
 
     setupLanguageConfig(target, templateBase);
-    copyDotfiles(templateBase, target);
+    copyDotfiles(templateCommon, target);
 
     const pkgPath = path.join(target, "package.json");
     writeTitanMetadata(pkgPath, templateType);
@@ -851,114 +865,158 @@ function validateCliTemplates(templateServer) {
 
 /**
  * Updates the titan runtime directory.
+ * Copies common first, then template-specific files.
  * @param {string} projectTitan - Project's titan directory.
- * @param {string} templateTitan - Template titan directory.
+ * @param {string} templateCommon - Common template directory.
+ * @param {string} templateTitan - Template-specific titan directory.
  */
-function updateTitanRuntime(projectTitan, templateTitan) {
+function updateTitanRuntime(projectTitan, templateCommon, templateTitan) {
     removeDirectorySafe(projectTitan);
-    copyDir(templateTitan, projectTitan);
+
+    const commonTitan = path.join(templateCommon, "titan");
+    if (fs.existsSync(commonTitan)) {
+        copyDir(commonTitan, projectTitan);
+    }
+
+    if (fs.existsSync(templateTitan)) {
+        copyDir(templateTitan, projectTitan);
+    }
+
     console.log(green("✔ Updated titan/ runtime"));
 }
 
 /**
  * Updates the server directory with latest templates.
+ * Copies common first, then template-specific files.
  * @param {string} projectServer - Project's server directory.
- * @param {string} templateServer - Template server directory.
+ * @param {string} templateCommon - Common template directory.
+ * @param {string} templateServer - Template-specific server directory.
  */
-function updateServerDirectory(projectServer, templateServer) {
+function updateServerDirectory(projectServer, templateCommon, templateServer) {
     if (!fs.existsSync(projectServer)) {
         fs.mkdirSync(projectServer);
     }
 
-    const srcCargo = path.join(templateServer, "Cargo.toml");
+    const commonCargo = path.join(templateCommon, "server", "Cargo.toml");
     const destCargo = path.join(projectServer, "Cargo.toml");
+    copyFileIfExists(commonCargo, destCargo);
 
+    const srcCargo = path.join(templateServer, "Cargo.toml");
     if (copyFileIfExists(srcCargo, destCargo)) {
         console.log(green("✔ Updated server/Cargo.toml"));
     }
 
     const projectSrc = path.join(projectServer, "src");
-    const templateSrc = path.join(templateServer, "src");
-
     removeDirectorySafe(projectSrc);
-    copyDir(templateSrc, projectSrc);
+
+    const commonSrc = path.join(templateCommon, "server", "src");
+    if (fs.existsSync(commonSrc)) {
+        copyDir(commonSrc, projectSrc);
+    }
+
+    const templateSrc = path.join(templateServer, "src");
+    if (fs.existsSync(templateSrc)) {
+        copyDir(templateSrc, projectSrc);
+    }
+
     console.log(green("✔ Updated server/src/"));
 }
 
 /**
- * Updates root-level configuration files.
- * @param {string} templateBase - Template base directory.
+ * Updates root-level configuration files from common template.
+ * Transforms _gitignore → .gitignore and _dockerignore → .dockerignore
+ * Then removes the underscore-prefixed originals from project root.
+ * @param {string} templateCommon - Common template directory.
  * @param {string} root - Project root directory.
  */
-function updateRootConfigFiles(templateBase, root) {
-    const configFiles = [".gitignore", ".dockerignore", "Dockerfile"];
+function updateRootConfigFiles(templateCommon, root) {
+    const dotfiles = {
+        "_gitignore": ".gitignore",
+        "_dockerignore": ".dockerignore",
+    };
 
-    for (const file of configFiles) {
-        const src = path.join(templateBase, file);
-        const dest = path.join(root, file);
+    for (const [srcName, destName] of Object.entries(dotfiles)) {
+        const src = path.join(templateCommon, srcName);
+        const dest = path.join(root, destName);
 
         if (copyFileIfExists(src, dest)) {
-            console.log(green(`✔ Updated ${file}`));
+            console.log(green(`✔ Updated ${destName}`));
         }
+
+        // Eliminar el archivo con prefijo _ si existe en el proyecto
+        removeFileIfExists(path.join(root, srcName));
+    }
+
+    const dockerfileSrc = path.join(templateCommon, "Dockerfile");
+    const dockerfileDest = path.join(root, "Dockerfile");
+    if (copyFileIfExists(dockerfileSrc, dockerfileDest)) {
+        console.log(green("✔ Updated Dockerfile"));
     }
 }
 
 /**
  * Updates language-specific configuration based on project type.
- * @param {string} templateBase - Template base directory.
+ * Copies from common first, then from template-specific.
+ * @param {string} templateCommon - Common template directory.
+ * @param {string} templateBase - Template-specific base directory.
  * @param {string} root - Project root directory.
  */
-function updateLanguageConfig(templateBase, root) {
-    const tsconfigSrc = path.join(templateBase, "tsconfig.json");
-    const tsconfigDest = path.join(root, "tsconfig.json");
+function updateLanguageConfig(templateCommon, templateBase, root) {
+    const configs = ["tsconfig.json", "jsconfig.json"];
 
-    if (copyFileIfExists(tsconfigSrc, tsconfigDest)) {
-        console.log(green("✔ Updated tsconfig.json"));
-    }
+    for (const config of configs) {
+        const dest = path.join(root, config);
 
-    const jsconfigSrc = path.join(templateBase, "jsconfig.json");
-    const jsconfigDest = path.join(root, "jsconfig.json");
+        const commonSrc = path.join(templateCommon, config);
+        copyFileIfExists(commonSrc, dest);
 
-    if (copyFileIfExists(jsconfigSrc, jsconfigDest)) {
-        console.log(green("✔ Updated jsconfig.json"));
+        const templateSrc = path.join(templateBase, config);
+        if (copyFileIfExists(templateSrc, dest)) {
+            console.log(green(`✔ Updated ${config}`));
+        }
     }
 }
 
 /**
  * Updates the TypeScript declaration file.
- * @param {string} templateBase - Template base directory.
+ * @param {string} templateCommon - Common template directory.
+ * @param {string} templateBase - Template-specific base directory.
  * @param {string} appDir - Application directory.
  */
-function updateTypeDeclarations(templateBase, appDir) {
-    const srcDts = path.join(templateBase, "app", "titan.d.ts");
-    const destDts = path.join(appDir, "titan.d.ts");
-
-    if (!fs.existsSync(srcDts)) return;
-
+function updateTypeDeclarations(templateCommon, templateBase, appDir) {
     if (!fs.existsSync(appDir)) {
         fs.mkdirSync(appDir);
     }
 
-    fs.copyFileSync(srcDts, destDts);
-    console.log(green("✔ Updated app/titan.d.ts"));
+    const destDts = path.join(appDir, "titan.d.ts");
+
+    const commonDts = path.join(templateCommon, "app", "titan.d.ts");
+    copyFileIfExists(commonDts, destDts);
+
+    const srcDts = path.join(templateBase, "app", "titan.d.ts");
+    if (copyFileIfExists(srcDts, destDts)) {
+        console.log(green("✔ Updated app/titan.d.ts"));
+    }
 }
 
 /**
  * Updates the global types file (types/titan.d.ts).
- * @param {string} templateBase - Template base directory.
+ * @param {string} templateCommon - Common template directory.
+ * @param {string} templateBase - Template-specific base directory.
  * @param {string} root - Project root directory.
  */
-function updateGlobalTypes(templateBase, root) {
-    const srcDts = path.join(templateBase, "types", "titan.d.ts");
+function updateGlobalTypes(templateCommon, templateBase, root) {
     const destDir = path.join(root, "types");
     const destDts = path.join(destDir, "titan.d.ts");
-
-    if (!fs.existsSync(srcDts)) return;
 
     if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir);
     }
 
+    const commonDts = path.join(templateCommon, "types", "titan.d.ts");
+    copyFileIfExists(commonDts, destDts);
+
+    const srcDts = path.join(templateBase, "types", "titan.d.ts");
     if (copyFileIfExists(srcDts, destDts)) {
         console.log(green("✔ Updated types/titan.d.ts"));
     }
@@ -970,7 +1028,7 @@ function updateGlobalTypes(templateBase, root) {
 
 /**
  * Updates the Titan runtime and server to the latest version.
- * Replaces titan/, server/src/, and configuration files.
+ * Copies common template first, then template-specific files.
  */
 function updateTitan() {
     const root = process.cwd();
@@ -981,19 +1039,19 @@ function updateTitan() {
     const projectTitan = path.join(root, "titan");
     const projectServer = path.join(root, "server");
 
-    const { templateBase, templateTitan, templateServer } = buildTemplatePaths(templateType);
+    const { templateCommon, templateBase, templateTitan, templateServer } = buildTemplatePaths(templateType);
 
     if (!validateTitanProject(projectTitan)) return;
     if (!validateCliTemplates(templateServer)) return;
 
     console.log(cyan("Updating Titan runtime and server..."));
 
-    updateTitanRuntime(projectTitan, templateTitan);
-    updateServerDirectory(projectServer, templateServer);
-    updateRootConfigFiles(templateBase, root);
-    updateLanguageConfig(templateBase, root);
-    updateTypeDeclarations(templateBase, path.join(root, "app"));
-    updateGlobalTypes(templateBase, root);
+    updateTitanRuntime(projectTitan, templateCommon, templateTitan);
+    updateServerDirectory(projectServer, templateCommon, templateServer);
+    updateRootConfigFiles(templateCommon, root);
+    updateLanguageConfig(templateCommon, templateBase, root);
+    updateTypeDeclarations(templateCommon, templateBase, path.join(root, "app"));
+    updateGlobalTypes(templateCommon, templateBase, root);
 
     console.log(bold(green("✔ Titan update complete")));
 }
@@ -1057,6 +1115,7 @@ function installExtensionDependencies(target) {
 
 /**
  * Creates a new Titan extension with the specified name.
+ * Extension template is copied directly without common merge.
  * @param {string} name - Extension name.
  */
 function createExtension(name) {

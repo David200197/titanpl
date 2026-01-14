@@ -21,7 +21,7 @@ build/
 coverage/
 
 # Rust builds
-templates/*/server/target/
+**/server/target/
 
 # mkctx - generated context
 mkctx/
