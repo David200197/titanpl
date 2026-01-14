@@ -2,20 +2,37 @@ import fs from "fs";
 import path from "path";
 import { bundle } from "./bundle.js";
 
-const cyan = (t) => `\x1b[36m${t}\x1b[0m`;
-const green = (t) => `\x1b[32m${t}\x1b[0m`;
+// ============================================================
+// Constants
+// ============================================================
+const COLORS = {
+  cyan: (text) => `\x1b[36m${text}\x1b[0m`,
+  green: (text) => `\x1b[32m${text}\x1b[0m`,
+  magenta: (text) => `\x1b[35m${text}\x1b[0m`,
+  red: (text) => `\x1b[31m${text}\x1b[0m`,
+};
 
+const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+
+// ============================================================
+// State
+// ============================================================
 const routes = {};
 const dynamicRoutes = {};
 const actionMap = {};
 
+// ============================================================
+// Route Builder
+// ============================================================
 /**
- * @param {string} method
- * @param {string} route
+ * Creates a route builder for the given HTTP method and route pattern
+ * @param {string} method - HTTP method (GET, POST, etc.)
+ * @param {string} route - Route pattern (e.g., "/api/users/:id")
  * @returns {TitanRouteBuilder}
  */
-function addRoute(method, route) {
+function createRouteBuilder(method, route) {
   const key = `${method.toUpperCase()}:${route}`;
+  const isDynamicRoute = route.includes(":");
 
   return {
     reply(value) {
@@ -26,8 +43,8 @@ function addRoute(method, route) {
     },
 
     action(name) {
-      if (route.includes(":")) {
-        if (!dynamicRoutes[method]) dynamicRoutes[method] = [];
+      if (isDynamicRoute) {
+        dynamicRoutes[method] ??= [];
         dynamicRoutes[method].push({
           method: method.toUpperCase(),
           pattern: route,
@@ -44,88 +61,118 @@ function addRoute(method, route) {
   };
 }
 
-// Build time methods implementation
+// ============================================================
+// Server Initialization
+// ============================================================
+/**
+ * Writes server metadata files (routes.json and action_map.json)
+ * @param {number} port - Server port
+ */
+function writeServerMetadata(port) {
+  const serverDir = path.join(process.cwd(), "server");
+
+  if (!fs.existsSync(serverDir)) {
+    fs.mkdirSync(serverDir, { recursive: true });
+  }
+
+  const routesData = {
+    __config: { port },
+    routes,
+    __dynamic_routes: Object.values(dynamicRoutes).flat(),
+  };
+
+  fs.writeFileSync(
+    path.join(serverDir, "routes.json"),
+    JSON.stringify(routesData, null, 2)
+  );
+
+  fs.writeFileSync(
+    path.join(serverDir, "action_map.json"),
+    JSON.stringify(actionMap, null, 2)
+  );
+}
+
+// ============================================================
+// Build-time Methods
+// ============================================================
 const buildTimeMethods = {
-  get(route) {
-    return addRoute("GET", route);
-  },
-
-  post(route) {
-    return addRoute("POST", route);
-  },
-
-  put(route) {
-    return addRoute("PUT", route);
-  },
-
-  delete(route) {
-    return addRoute("DELETE", route);
-  },
-
-  patch(route) {
-    return addRoute("PATCH", route);
-  },
+  get: (route) => createRouteBuilder("GET", route),
+  post: (route) => createRouteBuilder("POST", route),
+  put: (route) => createRouteBuilder("PUT", route),
+  delete: (route) => createRouteBuilder("DELETE", route),
+  patch: (route) => createRouteBuilder("PATCH", route),
 
   log(module, msg) {
-    console.log(`[\x1b[35m${module}\x1b[0m] ${msg}`);
+    console.log(`[${COLORS.magenta(module)}] ${msg}`);
   },
 
   async start(port = 3000, msg = "") {
     try {
-      console.log(cyan("[Titan] Preparing runtime..."));
+      console.log(COLORS.cyan("[Titan] Preparing runtime..."));
       await bundle();
 
-      const base = path.join(process.cwd(), "server");
-      if (!fs.existsSync(base)) {
-        fs.mkdirSync(base, { recursive: true });
+      writeServerMetadata(port);
+
+      console.log(COLORS.green("✔ Titan metadata written successfully"));
+
+      if (msg) {
+        console.log(COLORS.cyan(msg));
       }
-
-      const routesPath = path.join(base, "routes.json");
-      const actionMapPath = path.join(base, "action_map.json");
-
-      fs.writeFileSync(
-        routesPath,
-        JSON.stringify(
-          {
-            __config: { port },
-            routes,
-            __dynamic_routes: Object.values(dynamicRoutes).flat(),
-          },
-          null,
-          2
-        )
-      );
-
-      fs.writeFileSync(actionMapPath, JSON.stringify(actionMap, null, 2));
-
-      console.log(green("✔ Titan metadata written successfully"));
-      if (msg) console.log(cyan(msg));
-    } catch (e) {
-      console.error(`\x1b[31m[Titan] Build Error: ${e.message}\x1b[0m`);
+    } catch (error) {
+      console.error(`${COLORS.red(`[Titan] Build Error: ${error.message}`)}`);
       process.exit(1);
     }
   },
 };
 
-// Proxy to catch any undefined method access
-const t = /** @type {TitanRuntime} */ (new Proxy(buildTimeMethods, {
-  get(target, prop) {
-    if (prop in target) {
-      return target[prop];
-    }
+// ============================================================
+// Runtime Proxy
+// ============================================================
+/**
+ * Creates an error for runtime-only method access
+ * @param {string} methodPath - Full method path (e.g., "request.body")
+ * @returns {Error}
+ */
+function createRuntimeOnlyError(methodPath) {
+  return new Error(
+    `[Titan] t.${methodPath}() is only available inside actions at runtime.`
+  );
+}
 
-    return new Proxy(() => {
-      throw new Error(`[Titan] t.${String(prop)}() is only available inside actions at runtime.`);
-    }, {
+/**
+ * Creates a proxy that throws runtime-only errors for nested property access
+ * @param {string | symbol} parentProp - Parent property name
+ */
+function createNestedProxy(parentProp) {
+  return new Proxy(
+    () => {
+      throw createRuntimeOnlyError(String(parentProp));
+    },
+    {
       get(_, nestedProp) {
         return () => {
-          throw new Error(`[Titan] t.${String(prop)}.${String(nestedProp)}() is only available inside actions at runtime.`);
+          throw createRuntimeOnlyError(`${String(parentProp)}.${String(nestedProp)}`);
         };
-      }
-    });
-  }
-}));
+      },
+    }
+  );
+}
 
+const t = /** @type {TitanRuntime} */ (
+  new Proxy(buildTimeMethods, {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      return createNestedProxy(prop);
+    },
+  })
+);
+
+// ============================================================
+// Exports
+// ============================================================
 // @ts-ignore - t is assigned to globalThis for runtime
 globalThis.t = t;
+
 export default t;
