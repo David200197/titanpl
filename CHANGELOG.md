@@ -2,6 +2,13 @@
 
 All notable changes to the **Titan Planet** project will be documented in this file.
 
+## [26.8.3] - 2026-01-14
+
+### ✨ Developer Experience (DX)
+- **Minimalist Hot Reloads**: The Titan branding banner and server address are now only displayed on the initial start. Subsequent hot reloads are significantly cleaner, showing only the "Stabilizing" spinner and new logs.
+- **Smart Startup Logic**: Optimized how the dev server captures and flushes logs during the "orbit stabilization" phase to ensure no data is lost while keeping the UI remains tidy.
+- **Improved Windows Stability**: Refined port handling and process cleanup to prevent "address in use" errors during rapid file changes.
+
 ## [26.8.2] - 2026-01-14
 
 ### 🏎️ Performance Optimizations

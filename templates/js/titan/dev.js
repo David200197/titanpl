@@ -3,7 +3,6 @@ import { spawn, execSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
-import { bundle } from "./bundle.js";
 
 // Required for __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -39,12 +38,20 @@ function getTitanVersion() {
                 cur = path.join(cur, "..");
             }
         } catch (e2) { }
+
+        try {
+            // Fallback to calling tit --version
+            const output = execSync("tit --version", { encoding: "utf-8" }).trim();
+            const match = output.match(/v(\d+\.\d+\.\d+)/);
+            if (match) return match[1];
+        } catch (e3) { }
     }
     return "0.1.0";
 }
 
 let serverProcess = null;
 let isKilling = false;
+let isFirstBoot = true;
 
 // ... (killServer same as before) 
 async function killServer() {
@@ -156,7 +163,24 @@ async function startRustServer(retryCount = 0) {
                 isReady = true;
                 clearTimeout(slowTimer);
                 stopSpinner(true, "Your app is now orbiting Titan Planet");
-                process.stdout.write(stdoutBuffer);
+
+                if (isFirstBoot) {
+                    process.stdout.write(stdoutBuffer);
+                    isFirstBoot = false;
+                } else {
+                    // On subsequent reloads, only print non-banner lines from the buffer
+                    const lines = stdoutBuffer.split("\n");
+                    for (const line of lines) {
+                        const isBanner = line.includes("Titan server running") ||
+                            line.includes("████████╗") ||
+                            line.includes("╚══") ||
+                            line.includes("   ██║") ||
+                            line.includes("   ╚═╝");
+                        if (!isBanner && line.trim()) {
+                            process.stdout.write(line + "\n");
+                        }
+                    }
+                }
                 stdoutBuffer = "";
             }
         } else {
