@@ -12,17 +12,17 @@ const __dirname = path.dirname(__filename);
 /* -------------------------------------------------------
  * Colors
  * ----------------------------------------------------- */
-const cyan = (t) => `\x1b[36m${t}\x1b[0m`;
-const green = (t) => `\x1b[32m${t}\x1b[0m`;
-const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
-const red = (t) => `\x1b[31m${t}\x1b[0m`;
-const bold = (t) => `\x1b[1m${t}\x1b[0m`;
-const gray = (t) => `\x1b[90m${t}\x1b[0m`;
+export const cyan = (t) => `\x1b[36m${t}\x1b[0m`;
+export const green = (t) => `\x1b[32m${t}\x1b[0m`;
+export const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
+export const red = (t) => `\x1b[31m${t}\x1b[0m`;
+export const bold = (t) => `\x1b[1m${t}\x1b[0m`;
+export const gray = (t) => `\x1b[90m${t}\x1b[0m`;
 
 /* -------------------------------------------------------
  * Invocation detection (tit vs titan)
  * ----------------------------------------------------- */
-function wasInvokedAsTit() {
+export function wasInvokedAsTit() {
     const script = process.argv[1];
     if (script) {
         const base = path.basename(script, path.extname(script)).toLowerCase();
@@ -51,7 +51,6 @@ function wasInvokedAsTit() {
 
     return false;
 }
-
 const isTitAlias = wasInvokedAsTit();
 
 if (isTitAlias) {
@@ -64,23 +63,24 @@ if (isTitAlias) {
 }
 
 /* -------------------------------------------------------
- * Args
- * ----------------------------------------------------- */
-const args = process.argv.slice(2);
-const cmd = args[0];
-
-/* -------------------------------------------------------
  * Titan version
  * ----------------------------------------------------- */
-const pkg = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "package.json"), "utf8")
-);
-const TITAN_VERSION = pkg.version;
+let TITAN_VERSION = "0.1.0";
+try {
+    const pkg = JSON.parse(
+        fs.readFileSync(path.join(__dirname, "package.json"), "utf8")
+    );
+    TITAN_VERSION = pkg.version;
+} catch (e) {
+    // Use default version
+}
+
+export { TITAN_VERSION };
 
 /* -------------------------------------------------------
  * Utils
  * ----------------------------------------------------- */
-function copyDir(src, dest, excludes = []) {
+export function copyDir(src, dest, excludes = []) {
     fs.mkdirSync(dest, { recursive: true });
 
     for (const file of fs.readdirSync(src)) {
@@ -103,7 +103,7 @@ function copyDir(src, dest, excludes = []) {
 /* -------------------------------------------------------
  * HELP
  * ----------------------------------------------------- */
-function help() {
+export function help() {
     console.log(`
  ${bold(cyan("Titan Planet"))}  v${TITAN_VERSION}
 
@@ -122,7 +122,7 @@ function help() {
 /* -------------------------------------------------------
  * INIT
  * ----------------------------------------------------- */
-async function initProject(name, templateName) {
+export async function initProject(name, templateName) {
     let projName = name;
 
     if (!projName) {
@@ -273,7 +273,7 @@ async function initProject(name, templateName) {
 /* -------------------------------------------------------
  * DEV SERVER
  * ----------------------------------------------------- */
-async function devServer() {
+export async function devServer() {
     const root = process.cwd();
     const devScript = path.join(root, "titan", "dev.js");
 
@@ -299,7 +299,7 @@ async function devServer() {
 /* -------------------------------------------------------
  * BUILD
  * ----------------------------------------------------- */
-async function buildProd() {
+export async function buildProd() {
     console.log(cyan("Titan: Building production output..."));
 
     const root = process.cwd();
@@ -384,7 +384,7 @@ async function buildProd() {
 /* -------------------------------------------------------
  * START
  * ----------------------------------------------------- */
-function startProd() {
+export function startProd() {
     const isWin = process.platform === "win32";
     const bin = isWin ? "titan-server.exe" : "titan-server";
 
@@ -400,8 +400,7 @@ function startProd() {
 /* -------------------------------------------------------
  * UPDATE
  * ----------------------------------------------------- */
-
-function updateTitan() {
+export function updateTitan() {
     const root = process.cwd();
 
     const projectTitan = path.join(root, "titan");
@@ -522,7 +521,7 @@ function updateTitan() {
 /* -------------------------------------------------------
  * CREATE EXTENSION
  * ----------------------------------------------------- */
-function createExtension(name) {
+export function createExtension(name) {
     if (!name) {
         console.log(red("Usage: titan create ext <name>"));
         return;
@@ -591,7 +590,7 @@ Next steps:
 `);
 }
 
-function runExtension() {
+export function runExtension() {
     const localSdk = path.join(__dirname, "titanpl-sdk", "bin", "run.js");
 
     if (fs.existsSync(localSdk)) {
@@ -614,37 +613,55 @@ function runExtension() {
 /* -------------------------------------------------------
  * ROUTER
  * ----------------------------------------------------- */
-(async () => {
-    // "titan create ext <name>" -> args = ["create", "ext", "calc_ext"]
-    if (cmd === "create" && args[1] === "ext") {
-        createExtension(args[2]);
-    } else if (cmd === "run" && args[1] === "ext") {
-        runExtension();
-    } else {
-        switch (cmd) {
-            case "init": {
-                const projName = args[1];
-                let tpl = null;
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
 
-                const tIndex = args.indexOf("--template") > -1 ? args.indexOf("--template") : args.indexOf("-t");
-                if (tIndex > -1 && args[tIndex + 1]) {
-                    tpl = args[tIndex + 1];
-                }
+if (isMainModule) {
+    const isTitAlias = wasInvokedAsTit();
 
-                await initProject(projName, tpl);
-                break;
-            }
-            case "dev": devServer(); break;
-            case "build": await buildProd(); break;
-            case "start": startProd(); break;
-            case "update": updateTitan(); break;
-            case "--version":
-            case "-v":
-            case "version":
-                console.log(cyan(`Titan v${TITAN_VERSION}`));
-                break;
-            default:
-                help();
-        }
+    if (isTitAlias) {
+        console.log(
+            yellow(
+                "[Notice] `tit` is deprecated. Please use `titan` instead.\n" +
+                "        `tit` will continue to work for now."
+            )
+        );
     }
-})();
+
+    const args = process.argv.slice(2);
+    const cmd = args[0];
+
+    (async () => {
+        // "titan create ext <name>" -> args = ["create", "ext", "calc_ext"]
+        if (cmd === "create" && args[1] === "ext") {
+            createExtension(args[2]);
+        } else if (cmd === "run" && args[1] === "ext") {
+            runExtension();
+        } else {
+            switch (cmd) {
+                case "init": {
+                    const projName = args[1];
+                    let tpl = null;
+
+                    const tIndex = args.indexOf("--template") > -1 ? args.indexOf("--template") : args.indexOf("-t");
+                    if (tIndex > -1 && args[tIndex + 1]) {
+                        tpl = args[tIndex + 1];
+                    }
+
+                    await initProject(projName, tpl);
+                    break;
+                }
+                case "dev": devServer(); break;
+                case "build": await buildProd(); break;
+                case "start": startProd(); break;
+                case "update": updateTitan(); break;
+                case "--version":
+                case "-v":
+                case "version":
+                    console.log(cyan(`Titan v${TITAN_VERSION}`));
+                    break;
+                default:
+                    help();
+            }
+        }
+    })();
+}
