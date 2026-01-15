@@ -11,15 +11,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 
-// Colors
-const cyan = (t) => `\x1b[36m${t}\x1b[0m`;
-const green = (t) => `\x1b[32m${t}\x1b[0m`;
-const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
-const red = (t) => `\x1b[31m${t}\x1b[0m`;
-const gray = (t) => `\x1b[90m${t}\x1b[0m`;
-const bold = (t) => `\x1b[1m${t}\x1b[0m`;
+// Colors - EXPORTADAS para testing
+export const cyan = (t) => `\x1b[36m${t}\x1b[0m`;
+export const green = (t) => `\x1b[32m${t}\x1b[0m`;
+export const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
+export const red = (t) => `\x1b[31m${t}\x1b[0m`;
+export const gray = (t) => `\x1b[90m${t}\x1b[0m`;
+export const bold = (t) => `\x1b[1m${t}\x1b[0m`;
 
-function getTitanVersion() {
+export function getTitanVersion() {
     try {
         const require = createRequire(import.meta.url);
         const pkgPath = require.resolve("@ezetgalaxy/titan/package.json");
@@ -52,7 +52,13 @@ let serverProcess = null;
 let isKilling = false;
 let isFirstBoot = true;
 
-async function killServer() {
+// Helpers for testing
+export function setServerProcess(proc) { serverProcess = proc; }
+export function resetServerProcess() { serverProcess = null; isKilling = false; }
+export function getServerProcess() { return serverProcess; }
+export function setIsKilling(val) { isKilling = val; }
+
+export async function killServer() {
     if (!serverProcess) return;
 
     isKilling = true;
@@ -79,13 +85,13 @@ async function killServer() {
     isKilling = false;
 }
 
-const delay = (ms) => new Promise(res => setTimeout(res, ms));
+export const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
 let spinnerTimer = null;
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let frameIdx = 0;
 
-function startSpinner(text) {
+export function startSpinner(text) {
     if (spinnerTimer) clearInterval(spinnerTimer);
     process.stdout.write("\x1B[?25l"); // Hide cursor
     spinnerTimer = setInterval(() => {
@@ -94,7 +100,7 @@ function startSpinner(text) {
     }, 80);
 }
 
-function stopSpinner(success = true, text = "") {
+export function stopSpinner(success = true, text = "") {
     if (spinnerTimer) {
         clearInterval(spinnerTimer);
         spinnerTimer = null;
@@ -110,7 +116,17 @@ function stopSpinner(success = true, text = "") {
     }
 }
 
-async function startRustServer(retryCount = 0) {
+// Variable TypeScript
+let isTsHealthy = false;
+let isTs = false;
+
+// Helpers for testing
+export function setTsHealthy(val) { isTsHealthy = val; }
+export function getTsHealthy() { return isTsHealthy; }
+export function setIsTs(val) { isTs = val; }
+export function getIsTs() { return isTs; }
+
+export async function startRustServer(retryCount = 0) {
     // If TS is broken, don't start
     if (isTs && !isTsHealthy) {
         stopSpinner(false, "Waiting for TypeScript errors to be fixed...");
@@ -213,7 +229,7 @@ async function startRustServer(retryCount = 0) {
     });
 }
 
-async function rebuild() {
+export async function rebuild() {
     if (isTs && !isTsHealthy) return;
 
     try {
@@ -249,9 +265,12 @@ async function rebuild() {
 }
 
 let tsProcess = null;
-let isTsHealthy = false; // STRICT: Assume unhealthy until checked
 
-function startTypeChecker() {
+// Helper for testing
+export function setTsProcess(proc) { tsProcess = proc; }
+export function getTsProcess() { return tsProcess; }
+
+export function startTypeChecker() {
     const root = process.cwd();
     if (!fs.existsSync(path.join(root, "tsconfig.json"))) return;
 
@@ -318,9 +337,7 @@ function startTypeChecker() {
     });
 }
 
-let isTs = false;
-
-async function startDev() {
+export async function startDev() {
     const root = process.cwd();
     const actionsDir = path.join(root, "app", "actions");
 
@@ -400,7 +417,7 @@ async function startDev() {
     });
 }
 
-async function handleExit() {
+export async function handleExit() {
     stopSpinner();
     console.log(gray("\n[Titan] Stopping server..."));
     await killServer();
@@ -417,4 +434,7 @@ async function handleExit() {
 process.on("SIGINT", handleExit);
 process.on("SIGTERM", handleExit);
 
-startDev();
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+    startDev();
+}
