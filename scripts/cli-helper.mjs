@@ -2,7 +2,7 @@
 
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║                     TITANPL CLI HELPER v2.1.0                            ║
+ * ║                     TITANPL CLI HELPER v2.2.0                            ║
  * ║        Interactive Assistant for Building Titan Planet Templates          ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  * 
@@ -14,6 +14,11 @@
  * Extensions are handled separately (create ext, run ext)
  * 
  * Error logging: build/log.txt with detailed error info
+ * 
+ * v2.2.0 Changes:
+ * - Fixed: dev/start commands now properly detect server ready state
+ * - Fixed: Timer stops when server is ready, shows port correctly
+ * - Added: Long-running command support (dev/start don't block)
  */
 
 import fs from "fs";
@@ -72,7 +77,7 @@ class Logger {
 
     init() {
         if (this.initialized) return;
-        
+
         if (!fs.existsSync(this.logDir)) {
             fs.mkdirSync(this.logDir, { recursive: true });
         }
@@ -85,7 +90,7 @@ class Logger {
     _createSessionHeader() {
         const now = this.sessionStart;
         const sep = "═".repeat(80);
-        
+
         return `
 ${sep}
  TITANPL CLI HELPER - ERROR LOG
@@ -210,7 +215,7 @@ class ProgressDashboard {
         this.interval = null;
         this.startTimes = new Map();
         this.globalStartTime = Date.now();
-        
+
         // Initialize states for each template
         templateKeys.forEach(tpl => {
             this.states.set(tpl, {
@@ -218,6 +223,7 @@ class ProgressDashboard {
                 step: "Waiting...",
                 startTime: null,
                 endTime: null,
+                port: null,
             });
         });
     }
@@ -225,17 +231,17 @@ class ProgressDashboard {
     start() {
         // Hide cursor
         process.stdout.write("\x1b[?25l");
-        
+
         // Start animation interval
         this.interval = setInterval(() => {
             this.frameIndex = (this.frameIndex + 1) % spinnerFrames.length;
             this._render();
         }, 80);
-        
+
         return this;
     }
 
-    update(templateKey, status, step) {
+    update(templateKey, status, step, port = null) {
         const state = this.states.get(templateKey);
         if (state) {
             // Track timing
@@ -245,9 +251,10 @@ class ProgressDashboard {
             if ((status === "success" || status === "error") && !state.endTime) {
                 state.endTime = Date.now();
             }
-            
+
             state.status = status;
             state.step = step;
+            if (port) state.port = port;
         }
     }
 
@@ -261,29 +268,29 @@ class ProgressDashboard {
         // Move cursor up to redraw all lines
         const totalLines = this.templateKeys.length + 2; // templates + header + separator
         process.stdout.write(`\x1b[${totalLines}A`);
-        
+
         // Header with elapsed time
         const elapsed = this._formatDuration(Date.now() - this.globalStartTime);
         process.stdout.write("\x1b[2K"); // Clear line
         console.log(c.dim(`  ⏱ Elapsed: ${elapsed}`));
-        
+
         // Separator
         process.stdout.write("\x1b[2K");
         console.log(c.gray("  " + "─".repeat(56)));
-        
+
         // Render each template row
         this.templateKeys.forEach((tplKey) => {
             const tpl = this.templatesConfig[tplKey];
             const state = this.states.get(tplKey);
-            
+
             // Clear line
             process.stdout.write("\x1b[2K");
-            
+
             // Build status indicator and step text
             let statusIcon;
             let stepText;
             let duration = "";
-            
+
             switch (state.status) {
                 case "waiting":
                     statusIcon = c.gray("⏳");
@@ -311,7 +318,7 @@ class ProgressDashboard {
                     }
                     break;
             }
-            
+
             // Format: emoji + name (padded) + status icon + step + duration
             const templateLabel = `${tpl.emoji} ${c[tpl.color](tpl.name.padEnd(18))}`;
             console.log(`  ${templateLabel} ${statusIcon} ${stepText}${duration}`);
@@ -341,7 +348,7 @@ class ProgressDashboard {
         const successful = this.templateKeys.filter(k => this.states.get(k).status === "success");
         const failed = this.templateKeys.filter(k => this.states.get(k).status === "error");
         const totalDuration = Date.now() - this.globalStartTime;
-        
+
         return {
             successful: successful.length,
             failed: failed.length,
@@ -360,28 +367,28 @@ const TEMPLATES = {
     js: {
         name: "JavaScript",
         description: "Standard JavaScript template",
-        port: 3001,
+        port: 4001,
         emoji: "📜",
         color: "yellow",
     },
     ts: {
-        name: "TypeScript", 
+        name: "TypeScript",
         description: "Standard TypeScript template",
-        port: 3002,
+        port: 4002,
         emoji: "📘",
         color: "blue",
     },
     "rust-js": {
         name: "Rust + JavaScript",
         description: "Hybrid Rust + JS template",
-        port: 3003,
+        port: 4003,
         emoji: "🦀",
         color: "red",
     },
     "rust-ts": {
         name: "Rust + TypeScript",
         description: "Hybrid Rust + TS template",
-        port: 3004,
+        port: 4004,
         emoji: "🦀",
         color: "magenta",
     },
@@ -393,30 +400,35 @@ const COMMANDS = {
         description: "Create new Titan project",
         emoji: "🚀",
         needsExistingProject: false,
+        isLongRunning: false,
     },
     dev: {
         name: "dev",
         description: "Start development server (hot reload)",
         emoji: "🔥",
         needsExistingProject: true,
+        isLongRunning: true,  // <-- Server never terminates
     },
     build: {
         name: "build",
         description: "Build for production",
         emoji: "📦",
         needsExistingProject: true,
+        isLongRunning: false,
     },
     start: {
         name: "start",
         description: "Start production server",
         emoji: "▶️",
         needsExistingProject: true,
+        isLongRunning: true,  // <-- Server never terminates
     },
     update: {
         name: "update",
         description: "Update Titan engine",
         emoji: "🔄",
         needsExistingProject: true,
+        isLongRunning: false,
     },
 };
 
@@ -427,11 +439,28 @@ const EXTENSION_COMMANDS = {
         emoji: "🧩",
     },
     "run-ext": {
-        name: "run ext", 
+        name: "run ext",
         description: "Test extension with titanpl-sdk",
         emoji: "🧪",
     },
 };
+
+// Patterns to detect when Titan server is ready
+const SERVER_READY_PATTERNS = [
+    "Titan server running",
+    "████████╗",                    // ASCII banner
+    "Your app is now orbiting",
+    "listening on",
+    "Server listening",
+];
+
+// Patterns to detect errors
+const SERVER_ERROR_PATTERNS = [
+    "error[E",           // Rust compilation errors
+    "EADDRINUSE",        // Port in use
+    "panicked at",       // Rust panics
+    "Build failed",
+];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERACTIVE MENUS
@@ -440,7 +469,7 @@ const EXTENSION_COMMANDS = {
 function printBanner() {
     console.log(`
 ${c.cyan("╔═══════════════════════════════════════════════════════════════════════════╗")}
-${c.cyan("║")}  ${c.bold(c.yellow("🪐"))} ${c.bold(c.white("TITANPL CLI HELPER"))} ${c.dim("v2.1.0")}                                         ${c.cyan("║")}
+${c.cyan("║")}  ${c.bold(c.yellow("🪐"))} ${c.bold(c.white("TITANPL CLI HELPER"))} ${c.dim("v2.2.0")}                                         ${c.cyan("║")}
 ${c.cyan("║")}  ${c.dim("Interactive Assistant for Titan Planet")}                                   ${c.cyan("║")}
 ${c.cyan("╚═══════════════════════════════════════════════════════════════════════════╝")}`);
 }
@@ -619,7 +648,41 @@ function updateAppPort(appFile, newPort) {
     return true;
 }
 
-function runCommand(cmd, cwd, env = {}) {
+function parseCargoProgress(chunk) {
+    // Downloading
+    if (chunk.includes("Downloading") && chunk.includes("crates")) {
+        const match = chunk.match(/Downloading (\d+) crates/);
+        return match ? `Downloading ${match[1]} crates...` : "Downloading crates...";
+    }
+    // Compiling
+    if (chunk.includes("Compiling")) {
+        const match = chunk.match(/Compiling (\S+)/);
+        return match ? `Compiling ${match[1]}...` : "Compiling...";
+    }
+    // Building
+    if (chunk.includes("Building")) {
+        const match = chunk.match(/\[.*?(\d+\/\d+).*?\]/);
+        return match ? `Building (${match[1]})...` : "Building...";
+    }
+    // Finished
+    if (chunk.includes("Finished")) {
+        return "Build complete, starting...";
+    }
+    return null;
+}
+
+// Check if output indicates server is ready
+function isServerReady(chunk) {
+    return SERVER_READY_PATTERNS.some(pattern => chunk.includes(pattern));
+}
+
+// Check if output indicates an error
+function isServerError(chunk) {
+    return SERVER_ERROR_PATTERNS.some(pattern => chunk.includes(pattern));
+}
+
+// Standard command (terminates)
+function runCommand(cmd, cwd, env = {}, onProgress = null) {
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         const isWindows = process.platform === "win32";
@@ -635,8 +698,23 @@ function runCommand(cmd, cwd, env = {}) {
         let stdout = "";
         let stderr = "";
 
-        child.stdout?.on("data", (data) => { stdout += data.toString(); });
-        child.stderr?.on("data", (data) => { stderr += data.toString(); });
+        child.stdout?.on("data", (data) => {
+            const chunk = data.toString();
+            stdout += chunk;
+            if (onProgress) {
+                const step = parseCargoProgress(chunk);
+                if (step) onProgress(step);
+            }
+        });
+
+        child.stderr?.on("data", (data) => {
+            const chunk = data.toString();
+            stderr += chunk;
+            if (onProgress) {
+                const step = parseCargoProgress(chunk);
+                if (step) onProgress(step);
+            }
+        });
 
         child.on("close", (code) => {
             const duration = Date.now() - startTime;
@@ -652,6 +730,146 @@ function runCommand(cmd, cwd, env = {}) {
             reject({ success: false, error: error.message, stdout, stderr, duration });
         });
     });
+}
+
+// Long-running command (server - doesn't terminate)
+// Returns when server is ready OR on error
+function runLongRunningCommand(cmd, cwd, env = {}, onProgress = null, timeout = 120000) {
+    return new Promise((resolve, reject) => {
+        const startTime = Date.now();
+        const isWindows = process.platform === "win32";
+        const shell = isWindows ? "cmd.exe" : "/bin/sh";
+        const shellArgs = isWindows ? ["/c", cmd] : ["-c", cmd];
+
+        const child = spawn(shell, shellArgs, {
+            cwd,
+            env: { ...process.env, ...env, CARGO_INCREMENTAL: "1" },
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+
+        let stdout = "";
+        let stderr = "";
+        let resolved = false;
+
+        // Timeout handler
+        let timeoutId;
+        if (timeout > 0) {
+            timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    reject({
+                        success: false,
+                        error: "Timeout waiting for server to start",
+                        stdout,
+                        stderr,
+                        duration: Date.now() - startTime,
+                        child,
+                    });
+                }
+            }, timeout);
+        }
+
+        const checkOutput = (chunk, isStderr = false) => {
+            if (resolved) return;
+
+            // Check for ready signal
+            if (isServerReady(chunk)) {
+                resolved = true;
+                if(timeoutId) clearTimeout(timeoutId);
+                const duration = Date.now() - startTime;
+                resolve({
+                    success: true,
+                    stdout,
+                    stderr,
+                    duration,
+                    child,  // Return child process so caller can manage it
+                });
+                return;
+            }
+
+            // Check for error signal
+            if (isServerError(chunk)) {
+                resolved = true;
+                if(timeoutId) clearTimeout(timeoutId);
+                const duration = Date.now() - startTime;
+                reject({
+                    success: false,
+                    error: "Server startup failed",
+                    stdout,
+                    stderr,
+                    duration,
+                    child,
+                });
+                return;
+            }
+
+            // Report progress
+            if (onProgress) {
+                const step = parseCargoProgress(chunk);
+                if (step) onProgress(step);
+            }
+        };
+
+        child.stdout?.on("data", (data) => {
+            const chunk = data.toString();
+            stdout += chunk;
+            checkOutput(chunk, false);
+        });
+
+        child.stderr?.on("data", (data) => {
+            const chunk = data.toString();
+            stderr += chunk;
+            checkOutput(chunk, true);
+        });
+
+        child.on("close", (code) => {
+            if (!resolved) {
+                resolved = true;
+                if(timeoutId) clearTimeout(timeoutId);
+                const duration = Date.now() - startTime;
+                if (code === 0) {
+                    resolve({ success: true, stdout, stderr, duration, child: null });
+                } else {
+                    reject({
+                        success: false,
+                        exitCode: code,
+                        stdout,
+                        stderr,
+                        duration,
+                        child: null,
+                    });
+                }
+            }
+        });
+
+        child.on("error", (error) => {
+            if (!resolved) {
+                resolved = true;
+                if(timeoutId) clearTimeout(timeoutId);
+                const duration = Date.now() - startTime;
+                reject({
+                    success: false,
+                    error: error.message,
+                    stdout,
+                    stderr,
+                    duration,
+                    child: null,
+                });
+            }
+        });
+    });
+}
+
+// Track running processes for cleanup
+const runningProcesses = new Map();
+
+function cleanupProcesses() {
+    for (const [key, child] of runningProcesses) {
+        if (child && !child.killed) {
+            child.kill("SIGTERM");
+        }
+    }
+    runningProcesses.clear();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -730,12 +948,12 @@ async function executeForTemplateWithDashboard(commandKey, templateKey, buildDir
             try {
                 await runCommand("npm install", targetDir);
                 result.steps.push({ name: "npm install", success: true });
-                dashboard.update(templateKey, "success", `Done → Port ${template.port}`);
+                dashboard.update(templateKey, "success", `Ready → Port ${template.port}`);
             } catch (err) {
                 result.success = false;
                 result.steps.push({ name: "npm install", success: false, error: err });
                 dashboard.update(templateKey, "error", "npm install failed");
-                
+
                 logger.logError({
                     template: templateKey,
                     command: "npm install",
@@ -750,7 +968,56 @@ async function executeForTemplateWithDashboard(commandKey, templateKey, buildDir
             }
         }
         // ─────────────────────────────────────────────────────────────────────
-        // DEV / BUILD / START / UPDATE: Execute on existing project
+        // DEV / START: Long-running server commands
+        // ─────────────────────────────────────────────────────────────────────
+        else if (command.isLongRunning) {
+            if (!fs.existsSync(targetDir)) {
+                dashboard.update(templateKey, "error", "Project not found");
+                result.success = false;
+                result.steps.push({ name: commandKey, success: false, error: "Project not found" });
+                return result;
+            }
+
+            const titanCmd = `titan ${commandKey}`;
+            dashboard.update(templateKey, "running", "Stabilizing orbit...");
+
+            try {
+                const res = await runLongRunningCommand(
+                    titanCmd,
+                    targetDir,
+                    {},
+                    (step) => dashboard.update(templateKey, "running", step),
+                    0
+                );
+
+                // Store the child process for later cleanup
+                if (res.child) {
+                    runningProcesses.set(templateKey, res.child);
+                }
+
+                result.steps.push({ name: commandKey, success: true });
+                dashboard.update(templateKey, "success", `Server ready → Port ${template.port}`);
+
+            } catch (err) {
+                result.success = false;
+                result.steps.push({ name: commandKey, success: false, error: err });
+                dashboard.update(templateKey, "error", `${command.name} failed`);
+
+                logger.logError({
+                    template: templateKey,
+                    command: titanCmd,
+                    step: commandKey,
+                    error: err.error || `${command.name} failed`,
+                    stderr: err.stderr,
+                    stdout: err.stdout,
+                    exitCode: err.exitCode,
+                    workingDir: targetDir,
+                    duration: err.duration,
+                });
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+        // BUILD / UPDATE: Standard commands that terminate
         // ─────────────────────────────────────────────────────────────────────
         else {
             if (!fs.existsSync(targetDir)) {
@@ -764,7 +1031,9 @@ async function executeForTemplateWithDashboard(commandKey, templateKey, buildDir
             dashboard.update(templateKey, "running", `${titanCmd}...`);
 
             try {
-                await runCommand(titanCmd, targetDir);
+                await runCommand(titanCmd, targetDir, {}, (step) => {
+                    dashboard.update(templateKey, "running", step);
+                });
                 result.steps.push({ name: commandKey, success: true });
                 dashboard.update(templateKey, "success", `${command.name} completed`);
             } catch (err) {
@@ -790,7 +1059,7 @@ async function executeForTemplateWithDashboard(commandKey, templateKey, buildDir
         result.success = false;
         result.error = error.message;
         dashboard.update(templateKey, "error", `Error: ${error.message.slice(0, 25)}...`);
-        
+
         logger.logError({
             template: templateKey,
             command: commandKey,
@@ -827,7 +1096,7 @@ async function executeExtensionCommand(commandKey, buildDir, logger) {
         try {
             // Create using titan create ext from buildDir
             await runCommand(`titan create ext ${name}`, buildDir);
-            
+
             // Move to build/extension if created with another name
             const createdDir = path.join(buildDir, name);
             if (fs.existsSync(createdDir)) {
@@ -902,10 +1171,10 @@ async function executeExtensionCommand(commandKey, buildDir, logger) {
             });
             return { success: false };
         }
-    } 
+    }
     else if (commandKey === "run-ext") {
         const extDir = path.join(buildDir, "extension");
-        
+
         if (!fs.existsSync(extDir) || !fs.existsSync(path.join(extDir, "titan.json"))) {
             console.log(`  ${c.warning("No extension found in build/extension. Create one first with 'create ext'.")}`);
             return { success: false };
@@ -968,6 +1237,7 @@ async function mainMenu(rootDir, buildDir, logger) {
 
         if (!mainChoice || mainChoice === "exit") {
             console.clear();
+            cleanupProcesses();
             console.log(c.cyan("\n  👋 Goodbye!\n"));
             break;
         }
@@ -977,13 +1247,13 @@ async function mainMenu(rootDir, buildDir, logger) {
         // ─────────────────────────────────────────────────────────────────────
         if (mainChoice === "extensions") {
             const extCommandKey = await singleSelect("Which extension command?", EXTENSION_COMMANDS, true);
-            
+
             if (!extCommandKey) continue;
 
             console.clear();
             printBanner();
             await executeExtensionCommand(extCommandKey, buildDir, logger);
-            
+
             console.log();
             await promptText("Press Enter to continue");
             continue;
@@ -993,7 +1263,7 @@ async function mainMenu(rootDir, buildDir, logger) {
         // TEMPLATES: First command, then templates
         // ─────────────────────────────────────────────────────────────────────
         const commandKey = await singleSelect("Which command do you want to run?", COMMANDS, true);
-        
+
         if (!commandKey) continue;
 
         // Select templates
@@ -1013,7 +1283,7 @@ async function mainMenu(rootDir, buildDir, logger) {
         // ─────────────────────────────────────────────────────────────────────
         console.clear();
         printBanner();
-        
+
         console.log();
         console.log(c.cyan("═".repeat(60)));
         console.log(`${COMMANDS[commandKey].emoji} ${c.bold(c.white(`Running '${COMMANDS[commandKey].name}' on ${selectedTemplates.length} template(s)`))}`)
@@ -1022,21 +1292,21 @@ async function mainMenu(rootDir, buildDir, logger) {
 
         // Create dashboard
         const dashboard = new ProgressDashboard(selectedTemplates, TEMPLATES);
-        
+
         // Print empty lines for dashboard (header + separator + templates)
         console.log(); // Elapsed time header
         console.log(); // Separator
         selectedTemplates.forEach(() => console.log()); // Template rows
-        
+
         dashboard.start();
 
         // Execute all in parallel
-        const promises = selectedTemplates.map(tpl => 
+        const promises = selectedTemplates.map(tpl =>
             executeForTemplateWithDashboard(commandKey, tpl, buildDir, templatesDir, commonDir, logger, dashboard)
         );
 
         const results = await Promise.all(promises);
-        
+
         dashboard.stop();
 
         // ─────────────────────────────────────────────────────────────────────
@@ -1053,7 +1323,7 @@ async function mainMenu(rootDir, buildDir, logger) {
         results.forEach(r => {
             const tpl = TEMPLATES[r.template];
             const status = r.success ? c.green("✔ OK") : c.red("✖ FAIL");
-            const port = r.success && commandKey === "init" ? c.gray(`→ Port ${r.port}`) : "";
+            const port = r.success ? c.gray(`→ Port ${r.port}`) : "";
             console.log(`  ${tpl.emoji} ${c[tpl.color](tpl.name.padEnd(20))} ${status} ${port}`);
         });
 
@@ -1065,9 +1335,20 @@ async function mainMenu(rootDir, buildDir, logger) {
             console.log(c.yellow(`  📄 See error details at: ${logger.logFile}`));
         }
 
+        // Show note for long-running commands
+        if (COMMANDS[commandKey].isLongRunning && summary.successful > 0) {
+            console.log();
+            console.log(c.cyan("  ℹ Servers are running in background. Press Ctrl+C to stop all."));
+        }
+
         console.log(c.cyan("═".repeat(60)));
         console.log();
         await promptText("Press Enter to continue");
+
+        // Clean up processes when returning to menu (for dev/start)
+        if (COMMANDS[commandKey].isLongRunning) {
+            cleanupProcesses();
+        }
     }
 }
 
@@ -1079,7 +1360,7 @@ async function main() {
     // Find project root directory
     let rootDir = process.cwd();
     const templatesPath = path.join(rootDir, "templates");
-    
+
     if (!fs.existsSync(templatesPath)) {
         rootDir = path.dirname(rootDir);
         if (!fs.existsSync(path.join(rootDir, "templates"))) {
@@ -1096,10 +1377,23 @@ async function main() {
 
     const logger = new Logger(buildDir);
 
+    // Handle Ctrl+C globally
+    process.on("SIGINT", () => {
+        cleanupProcesses();
+        console.log(c.cyan("\n\n  👋 Goodbye!\n"));
+        process.exit(0);
+    });
+
+    process.on("SIGTERM", () => {
+        cleanupProcesses();
+        process.exit(0);
+    });
+
     await mainMenu(rootDir, buildDir, logger);
 }
 
 main().catch(error => {
+    cleanupProcesses();
     console.error(c.error(`Fatal error: ${error.message}`));
     process.exit(1);
 });
