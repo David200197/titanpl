@@ -1,5 +1,15 @@
 # Changelog
 
+## [26.10.3] - 2026-01-21
+
+### ✨ Features
+- **CLI Helper**: Added a new CLI helper for better handling of multiple instances (beta phase).
+- **E2E Testing**: Added End-to-End (E2E) testing support. You can now create e2e tests using the cli-helper to simplify the process.
+
+### 🐛 Fixes
+- **CLI Symlink Resolution**: Fixed an issue where the CLI produced no output when invoked via a symlink (e.g., global nvm/npm install). The CLI now correctly resolves the real path of the script before checking if it is the main module.
+- **Start Command**: Fixed `npm run start` command which was previously causing an error.
+
 ## [26.10.2] - 2026-01-20
 
 ### 🧩 Extension Development Experience

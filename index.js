@@ -659,7 +659,7 @@ export function runExtension() {
 /* -------------------------------------------------------
  * ROUTER
  * ----------------------------------------------------- */
-const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+const isMainModule = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isMainModule) {
     const args = process.argv.slice(2);
