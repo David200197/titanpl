@@ -132,11 +132,6 @@ pub fn inject_extensions(scope: &mut v8::HandleScope, global: v8::Local<v8::Obje
     // Call individual injectors
     builtin::inject_builtin_extensions(scope, global, t_obj);
     external::inject_external_extensions(scope, global, t_obj);
-    
-    // Inject t.db (Stub)
-    let db_obj = v8::Object::new(scope);
-    let db_key = v8_str(scope, "db");
-    t_obj.set(scope, db_key.into(), db_obj.into());
 
     global.set(scope, t_key.into(), t_obj.into());
 }

@@ -8,11 +8,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
 use bcrypt::{hash, verify, DEFAULT_COST};
+use postgres::{Client as PgClient, NoTls};
+use std::sync::Mutex;
+use std::collections::HashMap;
 
 use crate::utils::{blue, gray, parse_expires_in};
 use super::{TitanRuntime, v8_str, v8_to_string, throw, ShareContextStore};
 
 const TITAN_CORE_JS: &str = include_str!("titan_core.js");
+
+// Database connection pool
+static DB_POOL: Mutex<Option<HashMap<String, PgClient>>> = Mutex::new(None);
+
 
 pub fn inject_builtin_extensions(scope: &mut v8::HandleScope, global: v8::Local<v8::Object>, t_obj: v8::Local<v8::Object>) {
     // 1. Native API Bindings
@@ -42,6 +49,11 @@ pub fn inject_builtin_extensions(scope: &mut v8::HandleScope, global: v8::Local<
     let fetch_fn = v8::Function::new(scope, native_fetch).unwrap();
     let fetch_key = v8_str(scope, "fetch");
     t_obj.set(scope, fetch_key.into(), fetch_fn.into());
+
+    // t.loadEnv
+    let env_fn = v8::Function::new(scope, native_load_env).unwrap();
+    let env_key = v8_str(scope, "loadEnv");
+    t_obj.set(scope, env_key.into(), env_fn.into());
 
     // auth, jwt, password ... (keep native)
     setup_native_utils(scope, t_obj);
@@ -102,6 +114,17 @@ fn setup_native_utils(scope: &mut v8::HandleScope, t_obj: v8::Local<v8::Object>)
     let sc_key = v8_str(scope, "shareContext");
     let sc_val = sc_obj.into();
     t_obj.set(scope, sc_key.into(), sc_val);
+
+    // t.db (Database operations)
+    // println!("[DEBUG] Setting up t.db...");
+    let db_obj = v8::Object::new(scope);
+    let db_connect_fn = v8::Function::new(scope, native_db_connect).unwrap();
+    let connect_key = v8_str(scope, "connect");
+    db_obj.set(scope, connect_key.into(), db_connect_fn.into());
+    
+    let db_key = v8_str(scope, "db");
+    t_obj.set(scope, db_key.into(), db_obj.into());
+    // println!("[DEBUG] t.db setup complete!");
 }
 
 fn native_read(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
@@ -428,6 +451,138 @@ fn native_password_verify(scope: &mut v8::HandleScope, args: v8::FunctionCallbac
     retval.set(v8::Boolean::new(scope, ok).into());
 }
 
+fn native_load_env(scope: &mut v8::HandleScope, _args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    use serde_json::json;
+
+    let mut map = serde_json::Map::new();
+
+    for (key, value) in std::env::vars() {
+        map.insert(key, json!(value));
+    }
+
+    let json_str = serde_json::to_string(&map).unwrap();
+    let v8_str = v8::String::new(scope, &json_str).unwrap();
+
+    if let Some(obj) = v8::json::parse(scope, v8_str) {
+        retval.set(obj);
+    } else {
+        retval.set(v8::null(scope).into());
+    }
+}
+
 fn native_define_action(_scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
     retval.set(args.get(0));
+}
+
+fn native_db_connect(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    let conn_string = v8_to_string(scope, args.get(0));
+    
+    if conn_string.is_empty() {
+        throw(scope, "t.db.connect(): connection string is required");
+        return;
+    }
+
+    // Test connection immediately
+    match PgClient::connect(&conn_string, NoTls) {
+        Ok(mut client) => {
+            // Store in pool
+            let mut pool = DB_POOL.lock().unwrap();
+            let map = pool.get_or_insert_with(HashMap::new);
+            map.insert(conn_string.clone(), client);
+        },
+        Err(e) => {
+            throw(scope, &format!("Database connection failed: {}", e));
+            return;
+        }
+    }
+    
+    // Return a DB connection object with methods
+    let db_conn_obj = v8::Object::new(scope);
+    
+    // Store connection string in a hidden property
+    let conn_key = v8_str(scope, "__conn_string");
+    let conn_val = v8_str(scope, &conn_string);
+    db_conn_obj.set(scope, conn_key.into(), conn_val.into());
+    
+    // Add query method
+    let query_fn = v8::Function::new(scope, native_db_query).unwrap();
+    let query_key = v8_str(scope, "query");
+    db_conn_obj.set(scope, query_key.into(), query_fn.into());
+    
+    retval.set(db_conn_obj.into());
+}
+
+fn native_db_query(scope: &mut v8::HandleScope, args: v8::FunctionCallbackArguments, mut retval: v8::ReturnValue) {
+    // Get 'this' context (the db connection object)
+    let this = args.this();
+    let this_obj = this.to_object(scope).unwrap();
+    
+    // Retrieve connection string
+    let conn_key = v8_str(scope, "__conn_string");
+    let conn_val = this_obj.get(scope, conn_key.into()).unwrap();
+    let conn_string = v8_to_string(scope, conn_val);
+    
+    // Get query string
+    let query = v8_to_string(scope, args.get(0));
+    
+    if query.is_empty() {
+        throw(scope, "db.query(): SQL query is required");
+        return;
+    }
+    
+    // Get connection from pool
+    let mut pool = DB_POOL.lock().unwrap();
+    let map = pool.as_mut().unwrap();
+    
+    let client = match map.get_mut(&conn_string) {
+        Some(c) => c,
+        None => {
+            throw(scope, "Database connection not found in pool");
+            return;
+        }
+    };
+    
+    // Execute query
+    match client.query(&query, &[]) {
+        Ok(rows) => {
+            let mut result = Vec::new();
+            
+            for row in rows {
+                let mut obj = serde_json::Map::new();
+                
+                for (i, column) in row.columns().iter().enumerate() {
+                    let col_name = column.name();
+                    let col_value: serde_json::Value = if let Ok(val) = row.try_get::<_, Option<String>>(i) {
+                        serde_json::json!(val)
+                    } else if let Ok(val) = row.try_get::<_, Option<i32>>(i) {
+                        serde_json::json!(val)
+                    } else if let Ok(val) = row.try_get::<_, Option<i64>>(i) {
+                        serde_json::json!(val)
+                    } else if let Ok(val) = row.try_get::<_, Option<f64>>(i) {
+                        serde_json::json!(val)
+                    } else if let Ok(val) = row.try_get::<_, Option<bool>>(i) {
+                        serde_json::json!(val)
+                    } else {
+                        serde_json::Value::Null
+                    };
+                    
+                    obj.insert(col_name.to_string(), col_value);
+                }
+                
+                result.push(serde_json::Value::Object(obj));
+            }
+            
+            let json_str = serde_json::to_string(&result).unwrap();
+            let v8_json_str = v8_str(scope, &json_str);
+            
+            if let Some(val) = v8::json::parse(scope, v8_json_str) {
+                retval.set(val);
+            } else {
+                retval.set(v8::Array::new(scope, 0).into());
+            }
+        },
+        Err(e) => {
+            throw(scope, &format!("Query failed: {}", e));
+        }
+    }
 }

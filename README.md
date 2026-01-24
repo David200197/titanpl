@@ -222,9 +222,9 @@ Titan compiles your entire app—JS/TS code, Rust code, and server logic—into 
 
 ---
 
-# 🧱 Architecture: Strictly Synchronous V8 Runtime
+# 🧱 Architecture: Multi-Threaded, Strictly Synchronous V8 Runtime
 
-Titan is **not** a Node.js framework. It is a **Rust server with embedded V8 engines** that executes JavaScript/TypeScript **synchronously**.
+TitanPl is **not** a Node.js framework, TitanPl have Gravity Runtime. It is a **Rust server with embedded V8 engines** that executes JavaScript/TypeScript **synchronously**.
 
 ### Key Architectural Principles:
 
@@ -316,7 +316,7 @@ export const fetchUser = defineAction((req) => {
 
 ---
 
-# 🚀 TitanPL Multi-Threaded Architecture
+# 🚀 TitanPL Gravity Multi-Threaded Architecture
 
 ### What this means:
 

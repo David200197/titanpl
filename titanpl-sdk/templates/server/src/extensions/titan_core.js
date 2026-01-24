@@ -14,4 +14,9 @@ globalThis.TextDecoder = class TextDecoder {
     }
 };
 
+// Process environment variables
+globalThis.process = {
+    env: t.loadEnv()
+};
+
 // Everything is strictly synchronous and request-driven.
