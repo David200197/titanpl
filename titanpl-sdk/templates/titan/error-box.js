@@ -12,6 +12,34 @@ const red = (text) => `\x1b[31m${text}\x1b[0m`;
  * @param {number} maxWidth - Maximum width per line
  * @returns {string[]} Array of wrapped lines
  */
+
+function getTitanVersion() {
+    try {
+        const require = createRequire(import.meta.url);
+        const pkgPath = require.resolve("@ezetgalaxy/titan/package.json");
+        return JSON.parse(fs.readFileSync(pkgPath, "utf-8")).version;
+    } catch (e) {
+        try {
+            let cur = __dirname;
+            for (let i = 0; i < 5; i++) {
+                const pkgPath = path.join(cur, "package.json");
+                if (fs.existsSync(pkgPath)) {
+                    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+                    if (pkg.name === "@ezetgalaxy/titan") return pkg.version;
+                }
+                cur = path.join(cur, "..");
+            }
+        } catch (e2) { }
+
+        try {
+            const output = execSync("tit --version", { encoding: "utf-8" }).trim();
+            const match = output.match(/v(\d+\.\d+\.\d+)/);
+            if (match) return match[1];
+        } catch (e3) { }
+    }
+    return "0.1.0";
+}
+
 function wrapText(text, maxWidth) {
     if (!text) return [''];
 
@@ -141,17 +169,14 @@ export function renderErrorBox(errorInfo) {
 
     // Add Footer with Branding
     lines.push('');
-    const version = "v0.1.0"; // Should be dynamic ideally, but hardcoding for now as per req
+    const version = getTitanVersion()
     lines.push(gray(`⏣ Titan Planet      ${version}`));
 
     // Build the box
     const topBorder = '┌' + '─'.repeat(boxWidth - 2) + '┐';
     const bottomBorder = '└' + '─'.repeat(boxWidth - 2) + '┘';
 
-    // We don't want to use colored strings inside padLine if we don't handle length correctly
-    // But since we use ANSI codes, we should be careful.
-    // However, for this requirement, I'll just use the raw lines and color the borders.
-
+   
     const boxLines = [
         red(topBorder),
         ...lines.map(line => {

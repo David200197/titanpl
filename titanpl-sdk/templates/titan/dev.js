@@ -83,7 +83,7 @@ async function killServer() {
 const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
 let spinnerTimer = null;
-const frames = ["⏣", "⟐", "⟡", "⟠", "⟡", "⟐"];  
+const frames = ["⏣", "⟐", "⟡", "⟠", "⟡", "⟐"];
 let frameIdx = 0;
 
 function startSpinner(text) {
@@ -125,6 +125,7 @@ async function startRustServer(retryCount = 0) {
 
     let isReady = false;
     let stdoutBuffer = "";
+    let stderrBuffer = "";
 
     const slowTimer = setTimeout(() => {
         if (!isReady && !isKilling) {
@@ -134,7 +135,7 @@ async function startRustServer(retryCount = 0) {
 
     serverProcess = spawn("cargo", ["run", "--quiet"], {
         cwd: serverPath,
-        stdio: ["ignore", "pipe", "ignore"], // RULE: Ignore stderr to hide Cargo logs
+        stdio: ["ignore", "pipe", "pipe"], // Capture stderr to detect port conflicts
         env: { ...process.env, CARGO_INCREMENTAL: "1" }
     });
 
@@ -175,7 +176,7 @@ async function startRustServer(retryCount = 0) {
         }
     });
 
-     // Monitor stderr for port binding errors
+    // Monitor stderr for port binding errors
     serverProcess.stderr.on("data", (data) => {
         stderrBuffer += data.toString();
     });
@@ -213,11 +214,11 @@ async function startRustServer(retryCount = 0) {
 
             stopSpinner(false, "Orbit stabilization failed");
 
-            // Debug: Show stderr if it's not empty and not a port error
-            if (stderrBuffer && stderrBuffer.trim()) {
-                console.log(gray("\n[Debug] Cargo stderr:"));
-                console.log(gray(stderrBuffer.substring(0, 500))); // Show first 500 chars
-            }
+            // // Debug: Show stderr if it's not empty and not a port error
+            // if (stderrBuffer && stderrBuffer.trim()) {
+            //     console.log(gray("\n[Debug] Cargo stderr:"));
+            //     console.log(gray(stderrBuffer.substring(0, 500))); // Show first 500 chars
+            // }
 
             if (runTime < 15000 && retryCount < maxRetries) {
                 await delay(2000);
