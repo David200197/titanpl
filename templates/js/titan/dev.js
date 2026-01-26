@@ -214,11 +214,11 @@ async function startRustServer(retryCount = 0) {
 
             stopSpinner(false, "Orbit stabilization failed");
 
-            // Debug: Show stderr if it's not empty and not a port error
-            if (stderrBuffer && stderrBuffer.trim()) {
-                console.log(gray("\n[Debug] Cargo stderr:"));
-                console.log(gray(stderrBuffer.substring(0, 500))); // Show first 500 chars
-            }
+            // // Debug: Show stderr if it's not empty and not a port error
+            // if (stderrBuffer && stderrBuffer.trim()) {
+            //     console.log(gray("\n[Debug] Cargo stderr:"));
+            //     console.log(gray(stderrBuffer.substring(0, 500))); // Show first 500 chars
+            // }
 
             if (runTime < 15000 && retryCount < maxRetries) {
                 await delay(2000);

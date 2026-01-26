@@ -78,7 +78,7 @@ const t = {
      * @param {number} [port=3000] 
      * @param {string} [msg=""] 
      */
-    async start(port = 3000, msg = "") {
+    async start(port = 3000, msg = "", threads) {
         try {
             console.log(cyan("[Titan] Preparing runtime..."));
             await bundle();
@@ -95,7 +95,7 @@ const t = {
                 routesPath,
                 JSON.stringify(
                     {
-                        __config: { port },
+                        __config: { port, threads },
                         routes,
                         __dynamic_routes: Object.values(dynamicRoutes).flat()
                     },

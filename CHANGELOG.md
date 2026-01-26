@@ -1,5 +1,44 @@
 # Changelog
 
+## [26.12.6] – 2026-01-26
+
+### Stability, Core Runtime Enhancements & Developer-Facing Improvements
+
+This release strengthens the Gravity execution model, improves extension-level safety, and introduces several refinements in route handling, request bridging, and worker consistency.
+
+## ✨ Highlights
+
+### **Gravity Runtime Refinements**
+
+Gravity receives an incremental stability upgrade aimed at increasing predictability under load and ensuring consistent performance across multi-threaded isolates.
+
+### **Improved Request/Response Bridge**
+
+Core request/response transfer paths have been polished, resulting in more reliable serialization, safer edge-case handling, and better compatibility with custom action frameworks.
+
+---
+
+## 🚀 Improvements
+
+* More reliable propagation of `t.response.*` changes from actions back into Rust, reducing null/undefined edge-cases during serialization.
+* Further optimized isolate reuse — lower cold-start latency and smoother thread scheduling across high-core environments.
+* Faster initialization of action bundles, especially when combining large JS bundles with V8 snapshot warm-ups.
+* Improved validation and structure checking for extension-provided methods injected into `t.*`.
+* More consistent generation of `routes.json` and `action_map.json` during the `tit` build/run pipeline.
+* Tighter internal enforcement of synchronous execution boundaries inside Gravity, ensuring safer deterministic behavior.
+
+---
+
+## 🐛 Fixes
+
+* Fixed an issue where returned values from actions could resolve to `null` if JSON stringification occurred inside a nested TryCatch context.
+* Patched an intermittent race condition where thread workers reported incomplete request metadata under heavy concurrent load.
+* Fixed improper merging of dynamic routes when multiple colon-parameters were used in chained definitions.
+* Eliminated a memory retention bug tied to per-request global shadow copies of `req` inside long-lived isolates.
+
+---
+
+
 ## [26.12.4] – 2026-01-25
 
 ### Minor Stability Release

@@ -14,6 +14,7 @@
 💟 **Titan Planet docs:** https://titan-docs-ez.vercel.app/docs
 🚀 **CLI: `titan` is now the canonical command. `tit` remains supported as an alias.**
 🛡️ **Strict Mode:** Titan now enforces zero type errors before running.
+✅ **For text response from a action file use t.response.text("Hii TitanPl")
 
 ---
 
