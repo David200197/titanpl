@@ -53,20 +53,17 @@ async function bundleJs(actionsDir, outDir) {
 
       footer: {
         js: `
-    (function () {
-      const fn =
-        __titan_exports["${actionName}"] ||
-        __titan_exports.default;
-    
-      if (typeof fn !== "function") {
-        throw new Error("[Titan] Action '${actionName}' not found or not a function");
-      }
-    
-      globalThis["${actionName}"] = function(request_arg) {
-         globalThis.req = request_arg;
-         return fn(request_arg);
-      };
-    })();
+   (function () {
+  const fn =
+    __titan_exports["${actionName}"] ||
+    __titan_exports.default;
+
+  if (typeof fn !== "function") {
+    throw new Error("[Titan] Action '${actionName}' not found or not a function");
+  }
+
+  globalThis["${actionName}"] = globalThis.defineAction(fn);
+})();
     `
       }
     });

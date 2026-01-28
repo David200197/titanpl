@@ -109,7 +109,7 @@ export function help() {
 
  ${green("titan init <project> [-t <template>]")}   Create new Titan project
  ${green("titan create ext <name>")} Create new Titan extension
- ${green("titan dev")}              Dev mode (hot reload)
+ ${green("titan dev [-cc]")}        Dev mode (hot reload) [-cc to backward clean]
  ${green("titan build")}            Build production Rust server
  ${green("titan start")}            Start production binary
  ${green("titan update")}           Update Titan engine
@@ -282,8 +282,31 @@ export async function initProject(name, templateName) {
 /* -------------------------------------------------------
  * DEV SERVER
  * ----------------------------------------------------- */
-export async function devServer() {
+export async function devServer(args = []) {
     const root = process.cwd();
+
+    // Check for clean cache flag
+    if (args.includes("-c") || args.includes("--clean") || args.includes("--clean-cache")) {
+        console.log(cyan("TitanPl: Clearing cache..."));
+
+        const pathsToClean = [
+            path.join(root, ".titan"),
+            path.join(root, "server", "actions"),
+            path.join(root, "server", "target")
+        ];
+
+        for (const p of pathsToClean) {
+            if (fs.existsSync(p)) {
+                try {
+                    fs.rmSync(p, { recursive: true, force: true });
+                    console.log(gray(`  ✔ Deleted ${path.relative(root, p)}`));
+                } catch (e) {
+                    console.log(yellow(`  ⚠ Could not delete ${path.relative(root, p)}: ${e.message}`));
+                }
+            }
+        }
+        console.log(green("✔ Cache cleared."));
+    }
     const devScript = path.join(root, "titan", "dev.js");
 
     if (!fs.existsSync(devScript)) {
@@ -686,7 +709,7 @@ if (isMainModule) {
                     await initProject(projName, tpl);
                     break;
                 }
-                case "dev": devServer(); break;
+                case "dev": devServer(process.argv.slice(3)); break;
                 case "build": await buildProd(); break;
                 case "start": startProd(); break;
                 case "update": updateTitan(); break;

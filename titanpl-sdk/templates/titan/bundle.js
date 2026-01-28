@@ -210,10 +210,7 @@ export async function bundle() {
     throw new Error("[Titan] Action '${actionName}' not found or not a function");
   }
 
-  globalThis["${actionName}"] = function(request_arg) {
-     globalThis.req = request_arg;
-     return fn(request_arg);
-  };
+  globalThis["${actionName}"] = globalThis.defineAction(fn);
 })();
 `
                 }

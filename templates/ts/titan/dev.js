@@ -130,6 +130,7 @@ async function startRustServer(retryCount = 0) {
     let isReady = false;
     let stdoutBuffer = "";
     let buildLogs = "";
+    let stderrBuffer = "";
 
     // If it takes more than 30s, update the message
     const slowTimer = setTimeout(() => {

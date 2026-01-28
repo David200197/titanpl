@@ -1,5 +1,24 @@
 # Changelog
 
+## [26.13.1] – 2026-01-28
+
+### Critical Bundling Fix & Action Wrapping
+
+## ✨ Highlights
+
+### **New: Deep Clean Command**
+Added a new `-c` flag to `titan dev` (e.g., `tit dev -c`).
+*   **Deep Clean**: Recursively deletes `.titan`, `server/actions`, and `server/target`.
+*   **Fresh Start**: Forces a full rebuild of both the JS bundler and the Rust project, useful for resolving stubborn build caching issues.
+
+## 🐛 Fixes
+
+*   **Fixed Hanging Actions**: Resolved a critical issue where the bundler was generating incorrect wrapper code (`return fn(req)` instead of `globalThis.defineAction(fn)`), causing the Rust runtime to never receive the completion signal.
+*   **Restored Request Completion**: Ensure all actions (sync and async) correctly trigger `t._finish_request`, preventing browser and curl requests from timing out.
+*   **Updated Bundler Logic**: Modified `builtin/bundle.js` to enforce the use of the `defineAction` helper for all compiled actions.
+
+---
+
 ## [26.13.0] – 2026-01-25
 
 ### Minor Stability Release & Drift Syntax Evolution
