@@ -31,17 +31,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Install Titan CLI
-        run: |
-          GIT_TERMINAL_PROMPT=0 \
-          git -c credential.helper= \
-              -c core.askpass= \
-              clone --depth 1 https://github.com/ezetgalaxy/titanpl.git /tmp/titanpl
+        run: npm install -g github:ezetgalaxy/titanpl@latest
 
-          cd /tmp/titanpl
-          npm ci
-          npm link
-
-          rm -rf /tmp/titanpl
 
       # ---------------- INIT PROJECT ----------------
       - name: Init TitanPl Project
