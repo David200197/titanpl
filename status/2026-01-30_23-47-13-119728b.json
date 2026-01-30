@@ -1,0 +1,41 @@
+{
+  "date": "2026-01-30_23-47-13",
+  "commit": "119728b",
+  "dev": {
+    "_titanTimings": [],
+    "env": {
+      "cpus": 4.0,
+      "dev": false,
+      "memFree": 11094933504.0,
+      "memTotal": 16771862528.0,
+      "pid": 2904.0,
+      "platform": "linux",
+      "uptime": 0.0
+    },
+    "failed": [
+      "drift"
+    ],
+    "ok": false,
+    "runtime": {
+      "memory": {},
+      "pid": 2904.0,
+      "uptime": 0.0
+    },
+    "tests": {
+      "buffer": true,
+      "crypto": true,
+      "fs": true,
+      "jwt": true,
+      "ls": true,
+      "net": true,
+      "password": true,
+      "response": true
+    },
+    "timestamp": "2026-01-30T23:43:19.876Z",
+    "warnings": []
+  },
+  "production": {
+    "ok": false,
+    "stage": "no-image"
+  }
+}
