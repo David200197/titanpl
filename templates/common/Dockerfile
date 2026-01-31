@@ -66,7 +66,28 @@ COPY --from=builder /app/server/target/release/titan-server ./titan-server
 COPY --from=builder /app/server/routes.json .
 COPY --from=builder /app/server/action_map.json .
 COPY --from=builder /app/server/src/actions ./actions
-COPY --from=builder /app/app/static ./static
+
+# ---------------- OPTIONAL APP FOLDERS ----------------
+# If you add any extra folders inside /app/app,
+# make sure to copy them from the builder stage.
+
+# Static assets
+# COPY --from=builder /app/app/static ./static
+
+# Public assets
+# COPY --from=builder /app/app/public ./public
+
+#DB
+# COPY --from=builder /app/app/db ./db
+
+# Any custom / extra folders
+# Example:
+# COPY --from=builder /app/app/<folder-name> ./<folder-name>
+
+# -------------------------------------------------------
+
+
+# Extensions
 COPY --from=builder /app/.ext ./.ext
 
 # ---- Ensure Executable ----

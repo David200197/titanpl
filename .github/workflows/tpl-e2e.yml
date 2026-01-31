@@ -55,6 +55,12 @@ jobs:
             };
 
             try {
+              const resp = drift(t.fetch("https://dog.ceo/api/breeds/image/random"));
+              const data = JSON.parse(resp);
+              result.tests.drift = data.status === "success";
+            } catch { result.failed.push("drift"); }
+
+            try {
               result.env = {
                 platform: t.os.platform(),
                 cpus: t.os.cpus(),
@@ -92,11 +98,6 @@ jobs:
                 const hash = t.password.hash("123");
                 result.tests.password = t.password.verify("123", hash);
               } catch { result.failed.push("password"); }
-
-              try {
-                const resp = drift(t.fetch("http://127.0.0.1:5100/"));
-                result.tests.drift = resp && resp.status === 200;
-              } catch { result.failed.push("drift"); }
 
               try {
                 result.tests.net = t.net.ip().length > 0;
