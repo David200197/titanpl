@@ -1,5 +1,13 @@
 # Changelog
 
+## [26.13.8] - 2026-02-03
+
+### 🐛 Fixed
+- **Native Extension Loading**: Resolved FFI safety issues in the Titan Server runtime (`extensions/external.rs`).
+  - Replaced unsafe `extern "C"` function pointer casting with a safe `v8::FunctionTemplate` proxy mechanism.
+  - Implemented `native_invoke_v8_proxy` to handle native function callbacks via `v8::External` data, ensuring correct "stdcall" vs "C" calling convention handling on Windows.
+  - Fixed `v8::FunctionCallback` signature mismatches.
+
 ## [26.13.7] – 2026-02-02
 
 ### Summary

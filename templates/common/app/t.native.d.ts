@@ -943,7 +943,10 @@ declare global {
          *
          * Data persists across requests and server restarts. All methods are
          * **synchronous**. Useful for caching, feature flags, or small config values.
-         *
+         * 
+         * @use Perfect for caching frequently accessed data and complex objects within a single process.
+         * @suggestion Use `setObject`/`getObject` for complex data structures to maintain types.
+
          * @see {@link TitanCore.LocalStorage} for method signatures.
          * @see https://titan-docs-ez.vercel.app/docs/13-titan-core — TitanCore Runtime APIs (t.ls)
          */
@@ -1597,6 +1600,40 @@ declare global {
              * @returns An array of all key names currently in storage.
              */
             keys(): string[];
+
+            /** Stores a complex JavaScript object using V8 serialization and Base64 encoding. */
+            setObject(key: string, value: any): void;
+            /** Retrieves and deserializes a complex JavaScript object. Returns null if not found or invalid. */
+            getObject<T = any>(key: string): T | null;
+
+            /**
+             * Serialize a JavaScript value to a V8-compatible binary format.
+             * 
+             * **Features:**
+             * - Supports Map, Set, Date, RegExp, BigInt, TypedArray
+             * - Supports Circular references
+             * - ~50x faster than JSON.stringify
+             * 
+             * @param value The value to serialize.
+             */
+            serialize(value: any): Uint8Array;
+
+            /**
+             * Deserialize a V8-compatible binary format back to a JavaScript value.
+             * 
+             * @param bytes The binary data to deserialize.
+             */
+            deserialize(bytes: Uint8Array): any;
+
+            /**
+             * Register a class for hydration/serialization support.
+             */
+            register(ClassRef: Function, hydrateFn?: Function, typeName?: string): void;
+
+            /**
+             * Hydrate a custom object from data.
+             */
+            hydrate(typeName: string, data: object): any;
         }
 
         /**

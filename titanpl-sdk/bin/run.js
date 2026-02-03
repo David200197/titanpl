@@ -198,24 +198,24 @@ await import("${name}");
 // Extension test harness for: ${name}
 const ext = t["${name}"];
 
-console.log("---------------------------------------------------");
-console.log("Testing Extension: ${name}");
-console.log("---------------------------------------------------");
+t.log("---------------------------------------------------");
+t.log("Testing Extension: ${name}");
+t.log("---------------------------------------------------");
 
 if (!ext) {
     console.log("ERROR: Extension '${name}' not found in global 't'.");
 } else {
-    console.log("✓ Extension loaded successfully!");
-    console.log("✓ Available methods:", Object.keys(ext).join(", "));
+    t.log("✓ Extension loaded successfully!");
+    t.log("✓ Available methods:", Object.keys(ext).join(", "));
     
     // Try 'hello' if it exists
     if (typeof ext.hello === 'function') {
         console.log("\\nTesting ext.hello('Titan')...");
         try {
            const res = ext.hello("Titan");
-           console.log("✓ Result:", res);
+           t.log("✓ Result:", res);
         } catch(e) {
-           console.log("✗ Error:", e.message);
+           t.log("✗ Error:", e.message);
         }
     }
 
@@ -224,25 +224,25 @@ if (!ext) {
         console.log("\\nTesting ext.calc(10, 20)...");
         try {
             const res = ext.calc(10, 20);
-            console.log("✓ Result:", res);
+            t.log("✓ Result:", res);
         } catch(e) {
-            console.log("✗ Error:", e.message);
+            t.log("✗ Error:", e.message);
         }
     }
 }
 
-console.log("---------------------------------------------------");
-console.log("✓ Test complete!");
-console.log("\\n📍 Routes:");
-console.log("  GET  http://localhost:3000/      → Test harness info");
-console.log("  GET  http://localhost:3000/test  → Extension test results (JSON)");
-console.log("---------------------------------------------------\\n");
+t.log("---------------------------------------------------");
+t.log("✓ Test complete!");
+t.log("\\n📍 Routes:");
+t.log("  GET  http://localhost:3000/      → Test harness info");
+t.log("  GET  http://localhost:3000/test  → Extension test results (JSON)");
+t.log("---------------------------------------------------\\n");
 
 // Create routes
 t.get("/test").action("test");
 t.get("/").reply("🚀 Extension Test Harness for ${name}\\n\\nVisit /test to see extension test results");
 
-await t.start(3000, "Titan Extension Test Running!");
+await t.start(3000, "Titan Extension Test Running!", 10, 16);
 `;
         fs.writeFileSync(appJsPath, testScript);
     }

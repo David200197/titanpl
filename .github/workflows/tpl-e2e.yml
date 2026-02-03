@@ -109,6 +109,32 @@ jobs:
               try { t.ls.set("h","1"); result.tests.ls=t.ls.get("h")==="1"; }
               catch { result.failed.push("ls"); }
 
+              // -------- LS V8 SERIALIZATION --------
+              try {
+              const complex = {
+                date: new Date(),
+                map: new Map([["key", "value"]]),
+                buffer: new Uint8Array([1, 2, 3]),
+              };
+
+              const bytes = t.ls.serialize(complex);
+              const restored = t.ls.deserialize(bytes);
+
+              const ok =
+                restored &&
+                restored.map instanceof Map &&
+                restored.map.get("key") === "value" &&
+                restored.buffer instanceof Uint8Array &&
+                restored.buffer.length === 3 &&
+                restored.date instanceof Date;
+
+                result.tests.ls_v8 = ok;
+                if (!ok) result.failed.push("ls_v8");
+              } catch {
+                result.failed.push("ls_v8");
+              }
+
+
               try { result.tests.response=!!t.response.json({ok:true}); }
               catch { result.failed.push("response"); }
 
