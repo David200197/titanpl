@@ -38,32 +38,52 @@ function getEngineBinaryPath(root) {
     // 1. Monorepo search (dev environment)
     let current = root;
     for (let i = 0; i < 5; i++) {
-        const potential = path.join(current, 'engine', 'target', 'release', binName);
-        if (fs.existsSync(potential)) return potential;
+        const potentialRelease = path.join(current, 'engine', 'target', 'release', binName);
+        if (fs.existsSync(potentialRelease)) return potentialRelease;
+        const potentialDebug = path.join(current, 'engine', 'target', 'debug', binName);
+        if (fs.existsSync(potentialDebug)) return potentialDebug;
+
+        // Check sibling monorepo folder for test-apps
+        const siblingRelease = path.join(current, 'titanpl', 'engine', 'target', 'release', binName);
+        if (fs.existsSync(siblingRelease)) return siblingRelease;
+        const siblingDebug = path.join(current, 'titanpl', 'engine', 'target', 'debug', binName);
+        if (fs.existsSync(siblingDebug)) return siblingDebug;
+        const siblingPkg = path.join(current, 'titanpl', 'packages', pkgName.replace('@titanpl/', ''), 'bin', binName);
+        if (fs.existsSync(siblingPkg)) return siblingPkg;
+
         current = path.dirname(current);
     }
 
     // 2. Search relative to @titanpl/cli (where optionalDependencies are installed)
-    //    This is the primary path for globally-installed CLI users.
     try {
-        const require = createRequire(import.meta.url);
-        const cliPkgPath = require.resolve('@titanpl/cli/package.json');
+        const req = createRequire(import.meta.url);
+        const cliPkgPath = req.resolve('@titanpl/cli/package.json');
         const cliDir = path.dirname(cliPkgPath);
-        // Check cli's own node_modules (global install sibling)
         const cliNodeModulesBin = path.join(cliDir, 'node_modules', pkgName, 'bin', binName);
         if (fs.existsSync(cliNodeModulesBin)) return cliNodeModulesBin;
-        // Check parent node_modules (hoisted global install)
-        const parentNodeModulesBin = path.join(path.dirname(cliDir), pkgName, 'bin', binName);
+
+        const nodeModulesDir = path.dirname(path.dirname(cliDir));
+        const parentNodeModulesBin = path.join(nodeModulesDir, pkgName, 'bin', binName);
         if (fs.existsSync(parentNodeModulesBin)) return parentNodeModulesBin;
     } catch (e) { }
 
-    // 3. Search in the project's own node_modules
+    // 3. Search in the project's own node_modules directly
     try {
-        const require = createRequire(import.meta.url);
-        const pkgPath = require.resolve(`${pkgName}/package.json`);
+        const req = createRequire(import.meta.url);
+        const pkgPath = req.resolve(`${pkgName}/package.json`);
         const binPath = path.join(path.dirname(pkgPath), 'bin', binName);
         if (fs.existsSync(binPath)) return binPath;
     } catch (e) { }
+
+    // Walk upwards from current dir searching for node_modules/@titanpl/engine-...
+    let searchDir = process.cwd();
+    for (let i = 0; i < 5; i++) {
+        const nmBin = path.join(searchDir, 'node_modules', pkgName, 'bin', binName);
+        if (fs.existsSync(nmBin)) return nmBin;
+        const parent = path.dirname(searchDir);
+        if (parent === searchDir) break;
+        searchDir = parent;
+    }
 
     // 4. Fallback: check common global npm paths
     const globalSearchRoots = [
@@ -76,7 +96,15 @@ function getEngineBinaryPath(root) {
     for (const gRoot of globalSearchRoots) {
         const gBin = path.join(gRoot, 'node_modules', pkgName, 'bin', binName);
         if (fs.existsSync(gBin)) return gBin;
+        const libNodeModulesBin = path.join(gRoot, 'lib', 'node_modules', pkgName, 'bin', binName);
+        if (fs.existsSync(libNodeModulesBin)) return libNodeModulesBin;
     }
+
+    try {
+        const globalModules = execSync('npm root -g').toString().trim();
+        const globalBin = path.join(globalModules, pkgName, 'bin', binName);
+        if (fs.existsSync(globalBin)) return globalBin;
+    } catch (e) { }
 
     return null;
 }

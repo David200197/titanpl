@@ -2,7 +2,7 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +50,23 @@ export function resolveEngineBinaryPath() {
   const cliParent = path.dirname(path.dirname(__dirname)); // up from cli/src → cli → parent
   const siblingBin = path.join(cliParent, pkgName, 'bin', binName);
   if (fs.existsSync(siblingBin)) return siblingBin;
+
+  // 4. Walk upwards from current dir searching for node_modules/@titanpl/engine-...
+  let searchDir = process.cwd();
+  for (let i = 0; i < 5; i++) {
+    const nmBin = path.join(searchDir, 'node_modules', pkgName, 'bin', binName);
+    if (fs.existsSync(nmBin)) return nmBin;
+    const parent = path.dirname(searchDir);
+    if (parent === searchDir) break;
+    searchDir = parent;
+  }
+
+  // 5. Check global npm
+  try {
+    const globalModules = execSync('npm root -g').toString().trim();
+    const globalBin = path.join(globalModules, pkgName, 'bin', binName);
+    if (fs.existsSync(globalBin)) return globalBin;
+  } catch (e) { }
 
   return null;
 }

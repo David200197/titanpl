@@ -1,5 +1,9 @@
 # Changelog - Titan Planet ⏣
 
+## [2.0.3] - 2026-03-03
+### 🐛 Fixed
+- **Engine Binary Loading**: Improved search logic to robustly find the Titan engine binary across node_modules hierarchies and global NPM installations in both development and production environments.
+
 
 ## [2.0.1] - 2026-03-02
 ### 🚀 MAJOR RELEASE: Version 1.0.0 Reset
