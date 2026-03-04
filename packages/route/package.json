@@ -1,6 +1,6 @@
 {
   "name": "@titanpl/route",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Titan routing DSL",
   "type": "module",
   "main": "index.js",

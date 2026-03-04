@@ -99,8 +99,27 @@ export async function initCommand(projectName, templateName) {
     let templateDir = path.resolve(__dirname, '..', '..', '..', '..', 'templates', selectedTemplate);
     let commonDir = path.resolve(__dirname, '..', '..', '..', '..', 'templates', 'common');
 
+    const tryPaths = [
+        // 1. Monorepo root / titanpl package root
+        { t: path.resolve(__dirname, '..', '..', '..', '..', 'templates', selectedTemplate), c: path.resolve(__dirname, '..', '..', '..', '..', 'templates', 'common') },
+        // 2. Published CLI package (global install / npm package)
+        { t: path.resolve(__dirname, '..', '..', 'templates', selectedTemplate), c: path.resolve(__dirname, '..', '..', 'templates', 'common') },
+        // 3. Fallback: one dir up? Just in case
+        { t: path.resolve(__dirname, '..', '..', '..', 'templates', selectedTemplate), c: path.resolve(__dirname, '..', '..', '..', 'templates', 'common') }
+    ];
+
+    let found = false;
+    for (const paths of tryPaths) {
+        if (fs.existsSync(paths.t) && fs.existsSync(paths.c)) {
+            templateDir = paths.t;
+            commonDir = paths.c;
+            found = true;
+            break;
+        }
+    }
+
     // Robust monorepo/fallback template search: look upwards from cwd
-    if (!fs.existsSync(templateDir) || !fs.existsSync(commonDir)) {
+    if (!found) {
         let searchDir = process.cwd();
         while (searchDir !== path.parse(searchDir).root) {
             const potentialTemplateDir = path.join(searchDir, 'templates', selectedTemplate);
@@ -108,6 +127,7 @@ export async function initCommand(projectName, templateName) {
             if (fs.existsSync(potentialTemplateDir) && fs.existsSync(potentialCommonDir)) {
                 templateDir = potentialTemplateDir;
                 commonDir = potentialCommonDir;
+                found = true;
                 break;
             }
             const sdkPotentialTemplateDir = path.join(searchDir, 'titanpl-sdk', 'templates', selectedTemplate);
@@ -115,13 +135,14 @@ export async function initCommand(projectName, templateName) {
             if (fs.existsSync(sdkPotentialTemplateDir) && fs.existsSync(sdkPotentialCommonDir)) {
                 templateDir = sdkPotentialTemplateDir;
                 commonDir = sdkPotentialCommonDir;
+                found = true;
                 break;
             }
             searchDir = path.dirname(searchDir);
         }
     }
 
-    if (!fs.existsSync(templateDir) || !fs.existsSync(commonDir)) {
+    if (!found) {
         console.log(chalk.red(`✖ Error finding template paths. Are you in a valid Titan monorepo?`));
         process.exit(1);
     }

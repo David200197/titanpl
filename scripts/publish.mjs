@@ -124,6 +124,30 @@ for (const { dir, content } of packageJsons) {
         }
     }
 
+    // Special case: Copy templates into CLI package
+    let copiedTemplates = false;
+    const destTemplatesDir = path.join(dir, 'templates');
+    if (content.name === '@titanpl/cli') {
+        const srcTemplatesDir = path.join(ROOT_DIR, 'templates');
+        if (fs.existsSync(srcTemplatesDir)) {
+            console.log(`📦 Copying templates to ${content.name}...`);
+            const copyRecursive = (src, dest) => {
+                if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+                for (const file of fs.readdirSync(src)) {
+                    const srcPath = path.join(src, file);
+                    const destPath = path.join(dest, file);
+                    if (fs.lstatSync(srcPath).isDirectory()) {
+                        copyRecursive(srcPath, destPath);
+                    } else {
+                        fs.copyFileSync(srcPath, destPath);
+                    }
+                }
+            };
+            copyRecursive(srcTemplatesDir, destTemplatesDir);
+            copiedTemplates = true;
+        }
+    }
+
     console.log(`\n======================================`);
     console.log(`🚀 Publishing ${content.name}...`);
     console.log(`======================================`);
@@ -132,6 +156,11 @@ for (const { dir, content } of packageJsons) {
         console.log(`✅ successfully published ${content.name} @ ${version}`);
     } catch (err) {
         console.error(`❌ Failed to publish ${content.name}`);
+    } finally {
+        if (copiedTemplates && fs.existsSync(destTemplatesDir)) {
+            console.log(`🧹 Cleaning up templates from ${content.name}...`);
+            fs.rmSync(destTemplatesDir, { recursive: true, force: true });
+        }
     }
 }
 console.log("\nAll done!");
