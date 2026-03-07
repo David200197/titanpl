@@ -1,4 +1,10 @@
 # Changelog - Titan Planet ⏣
+## [2.0.3] - 2026-03-03
+### 🚀 The Most Production Ready Stable Version
+- **Try out 2 new extensions for auth and rate limit `@t8n/iauth` and `@t8n/limit`** 
+- `npm i @t8n/iauth`
+- `npm i @t8n/limit`
+
 
 ## [2.0.3] - 2026-03-03
 ### 🐛 Fixed

@@ -1,6 +1,6 @@
 {
   "name": "@titanpl/cli",
-  "version": "2.0.4",
+  "version": "3.0.0",
   "description": "The unified CLI for Titan Planet. Use it to create, manage, build, and deploy high-performance backend projects.",
   "keywords": [
     "titanpl",
@@ -17,7 +17,7 @@
   },
   "bin": {
     "titan": "./index.js",
-    "titanpl": "./index.js",
+    "t8n": "./index.js",
     "tit": "./index.js"
   },
   "optionalDependencies": {
