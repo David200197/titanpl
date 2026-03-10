@@ -1,6 +1,6 @@
 {
   "name": "@titanpl/cli",
-  "version": "5.0.4",
+  "version": "5.0.5",
   "description": "The unified CLI for Titan Planet. Use it to create, manage, build, and deploy high-performance backend projects.",
   "keywords": [
     "titanpl",

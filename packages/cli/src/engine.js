@@ -19,6 +19,7 @@ export function resolveEngineBinaryPath() {
   const arch = os.arch();
   const pkgName = `@titanpl/engine-${platform}-${arch}`;
   const binName = platform === 'win32' ? 'titan-server.exe' : 'titan-server';
+  const shortPkgName = pkgName.split('/').pop();
 
   // 1. Monorepo search (local dev)
   const searchPaths = [
@@ -31,8 +32,14 @@ export function resolveEngineBinaryPath() {
   for (let startPath of searchPaths) {
     let current = startPath;
     for (let i = 0; i < 8; i++) {
-      const potential = path.join(current, 'engine', 'target', 'release', binName);
-      if (fs.existsSync(potential)) return potential;
+      // Check built binary (engine/target/release/...)
+      const builtBin = path.join(current, 'engine', 'target', 'release', binName);
+      if (fs.existsSync(builtBin)) return builtBin;
+
+      // Check package binary (packages/engine-*/bin/...)
+      const pkgBin = path.join(current, 'packages', shortPkgName, 'bin', binName);
+      if (fs.existsSync(pkgBin)) return pkgBin;
+
       const parent = path.dirname(current);
       if (parent === current) break;
       current = parent;
@@ -47,9 +54,22 @@ export function resolveEngineBinaryPath() {
   } catch (e) { }
 
   // 3. Fallback: sibling in node_modules (global install layout)
-  const cliParent = path.dirname(path.dirname(__dirname)); // up from cli/src → cli → parent
-  const siblingBin = path.join(cliParent, pkgName, 'bin', binName);
-  if (fs.existsSync(siblingBin)) return siblingBin;
+  // We need to handle scoped packages correctly. 
+  // If we are at .../node_modules/@titanpl/cli/src
+  // Up 1: .../node_modules/@titanpl/cli
+  // Up 2: .../node_modules/@titanpl
+  // Up 3: .../node_modules (This is where the engine package should be)
+  let current = __dirname;
+  for (let i = 0; i < 5; i++) {
+    const potentialNm = path.join(current, 'node_modules');
+    if (fs.existsSync(potentialNm)) {
+      const siblingBin = path.join(potentialNm, pkgName, 'bin', binName);
+      if (fs.existsSync(siblingBin)) return siblingBin;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
 
   // 4. Walk upwards from current dir searching for binary in root or .ext/node_modules
   let searchDir = process.cwd();

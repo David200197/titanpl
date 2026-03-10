@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://titan-docs-ez.vercel.app/" target="_blank">
+  <a href="https://titanpl.vercel.app/" target="_blank">
     <img src="https://i.ibb.co/VpBsTg6m/tpl-Logo.png" width="120" alt="TitanPl Logo" />
   </a>
 </p>
@@ -292,4 +292,4 @@ You can customize the build process in your `tanfig.json`:
 ---
 
 
-**To know more read docs 💟 **Titan Planet docs:** https://titan-docs-ez.vercel.app/docs**
+**To know more read docs 💟 **Titan Planet docs:** https://titanpl.vercel.app/docs**
