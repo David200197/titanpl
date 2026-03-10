@@ -11,6 +11,7 @@ dist/
 .titan/
 .ext/
 .env
+build/
 
 # Rust Build Artifacts (If using Hybrid)
 server/target/

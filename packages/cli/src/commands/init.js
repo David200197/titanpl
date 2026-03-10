@@ -164,7 +164,8 @@ export async function initCommand(projectName, templateName) {
     const remapping = {
         "_gitignore": ".gitignore",
         "_dockerignore": ".dockerignore",
-        "_titan.json": "titan.json",
+        "_tanfig.json": "tanfig.json",
+        "_titan.json": "tanfig.json",
         ".env": ".env"
     };
     for (const [srcName, destName] of Object.entries(remapping)) {
@@ -174,6 +175,19 @@ export async function initCommand(projectName, templateName) {
             fs.renameSync(src, dest);
         }
     }
+
+    // 4. Ensure tanfig.json exists with default build config
+    const tanfigPath = path.join(target, "tanfig.json");
+    if (!fs.existsSync(tanfigPath)) {
+        const defaultConfig = {
+            name: projName,
+            build: {
+                files: ["public", "static", "db", "config"]
+            }
+        };
+        fs.writeFileSync(tanfigPath, JSON.stringify(defaultConfig, null, 2));
+    }
+
 
     // Recursive template substitution
     const substitute = (dir) => {

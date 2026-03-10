@@ -53,7 +53,7 @@ ${bold(cyan("╰─────────────────────�
   ${bold("Commands:")}
     ${cyan("init")}      ${gray("Scaffold a new Titan project")}
     ${cyan("create")}    ${gray("Create a new project or extension (e.g. 'titan create ext my-ext')")}
-    ${cyan("build")}     ${gray("Compile actions and build production dist")}
+    ${cyan("build")}     ${gray("Compile actions and build production dist. Use --release or -r for a production-ready folder.")}
     ${cyan("dev")}       ${gray("Start the Gravity Engine in dev/watch mode")}
     ${cyan("start")}     ${gray("Start the production Gravity Engine")}
     ${cyan("update")}    ${gray("Update an existing project to latest Titan version")}
@@ -122,9 +122,10 @@ const cmd = process.argv[2];
       }
 
       case "build":
-        console.log(cyan("→ Building Titan project..."));
-        await buildCommand();
-        console.log(green("✔ Build complete"));
+        const isRelease = process.argv.includes("--release") || process.argv.includes("-r");
+        console.log(cyan(`→ Building Titan project${isRelease ? " (Release mode)" : ""}...`));
+        await buildCommand(isRelease);
+        console.log(green(`✔ ${isRelease ? "Release" : "Build"} complete`));
         break;
 
       case "dev":

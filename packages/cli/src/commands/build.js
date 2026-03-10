@@ -1,6 +1,7 @@
-import { build } from "@titanpl/packet";
+import { build, release } from "@titanpl/packet";
 
-export async function buildCommand() {
-  const dist = await build(process.cwd());
-  console.log("✔ Build complete →", dist);
+export async function buildCommand(isRelease = false) {
+  const buildFn = isRelease ? release : build;
+  const dist = await buildFn(process.cwd());
+  console.log(`✔ ${isRelease ? 'Release' : 'Build'} complete →`, dist);
 }

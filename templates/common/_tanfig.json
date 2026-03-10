@@ -1,0 +1,14 @@
+{
+    "name": "{{name}}",
+    "description": "A powerful Titan Planet project",
+    "version": "1.0.0",
+    "build": {
+        "purpose": "test",
+        "files": [
+            "public",
+            "static",
+            "db",
+            "config"
+        ]
+    }
+}

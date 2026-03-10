@@ -51,11 +51,21 @@ export function resolveEngineBinaryPath() {
   const siblingBin = path.join(cliParent, pkgName, 'bin', binName);
   if (fs.existsSync(siblingBin)) return siblingBin;
 
-  // 4. Walk upwards from current dir searching for node_modules/@titanpl/engine-...
+  // 4. Walk upwards from current dir searching for binary in root or .ext/node_modules
   let searchDir = process.cwd();
   for (let i = 0; i < 5; i++) {
+    // Check root (Directly in build/ folder)
+    const rootBin = path.join(searchDir, binName);
+    if (fs.existsSync(rootBin)) return rootBin;
+
+    // Check node_modules
     const nmBin = path.join(searchDir, 'node_modules', pkgName, 'bin', binName);
     if (fs.existsSync(nmBin)) return nmBin;
+
+    // Check .ext (Release mode layout)
+    const extBin = path.join(searchDir, '.ext', pkgName, 'bin', binName);
+    if (fs.existsSync(extBin)) return extBin;
+
     const parent = path.dirname(searchDir);
     if (parent === searchDir) break;
     searchDir = parent;
@@ -110,7 +120,8 @@ export function startEngine(watchMode = false) {
     env: {
       ...process.env,
       TITAN_ENV: watchMode ? 'development' : 'production',
-      Titan_Dev: watchMode ? '1' : '0'
+      TITAN_DEV: watchMode ? '1' : '0',
+      NODE_ENV: watchMode ? 'development' : 'production'
     }
   });
 

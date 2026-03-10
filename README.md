@@ -237,13 +237,57 @@ Extend the runtime with custom Rust engines using **Titan Extensions**.
 
 ---
 
-# 📦 Deployment
+# 📦 Building & Deployment
 
-Titan compiles your entire app—JS/TS code, Rust code, and server logic—into a **single executable**.
+Titan offers a unified build system that packages your JS/TS code, assets, and the native engine into a single, self-contained `build/` directory.
 
-* **Tiny Docker Images**: Alpine-based, ~20MB compressed.
-* **Instant Startup**: No node_modules overhead.
-* **Secure**: No access to system APIs from JS unless explicitly bridged.
+### 1. Production Build
+Run this command from your project root:
+```bash
+titan build --release
+```
+This will:
+* Bundle your actions into optimized `.jsbundle` files.
+* Extract all required Titan extensions and native libraries to `.ext/`.
+* Copy your `public/`, `static/`, and other configured assets.
+* Generate a `titan-server` executable in the `build/` folder.
+
+### 2. Run the Build
+```bash
+cd build
+./titan-server
+```
+Your application is now running as a standalone native server.
+
+### 🐳 Docker Deployment
+The `titan build --release` command is optimized for Docker. Your `Dockerfile` can be as simple as:
+
+```dockerfile
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY . .
+RUN npm install --include=optional
+RUN npx titan build --release
+
+FROM ubuntu:24.04
+WORKDIR /app
+COPY --from=builder /app/build .
+CMD ["./titan-server", "run", "dist"]
+```
+This produces a tiny, high-performance production image with zero `node_modules`.
+
+### 🛠 Configuration (`tanfig.json`)
+You can customize the build process in your `tanfig.json`:
+```json
+{
+  "build": {
+    "purpose": "deploy",
+    "files": ["public", "db", "secrets"]
+  }
+}
+```
+* **`purpose`**: Use `deploy` to skip `node_modules` junctions for the smallest possible footprint.
+* **`files`**: List any extra folders you want included in the `build/` output.
 
 ---
 
