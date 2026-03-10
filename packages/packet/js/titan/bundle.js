@@ -33,20 +33,32 @@ const NODE_BUILTIN_MAP = {
   "node:util": "@titanpl/node/util",
 };
 
-const titanNodeCompatPlugin = {
-  name: "titan-node-compat",
-  setup(build) {
-    build.onResolve({ filter: /.*/ }, args => {
-      if (NODE_BUILTIN_MAP[args.path]) {
-        try {
-          const resolved = require.resolve(NODE_BUILTIN_MAP[args.path]);
-          return { path: resolved };
-        } catch (e) {
-          throw new Error(`[TitanPL] Failed to resolve Node shim: ${NODE_BUILTIN_MAP[args.path]}`);
+const createTitanNodeCompatPlugin = (root) => {
+  const rootRequire = createRequire(path.join(root, 'package.json'));
+
+  return {
+    name: "titan-node-compat",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, args => {
+        if (NODE_BUILTIN_MAP[args.path]) {
+          const shimPkg = NODE_BUILTIN_MAP[args.path];
+          try {
+            // 1. Try to resolve from project root (local node_modules)
+            const resolved = rootRequire.resolve(shimPkg);
+            return { path: resolved };
+          } catch (e) {
+            try {
+              // 2. Fallback to CLI's own context
+              const resolved = require.resolve(shimPkg);
+              return { path: resolved };
+            } catch (e2) {
+              throw new Error(`[TitanPL] Failed to resolve Node shim: ${shimPkg}. Ensure @titanpl/node is installed.`);
+            }
+          }
         }
-      }
-    });
-  }
+      });
+    }
+  };
 };
 
 function getTitanVersion() {
@@ -96,7 +108,7 @@ export async function bundleFile(options) {
       platform: 'node',
       target,
       logLevel: 'silent',
-      plugins: [titanNodeCompatPlugin],
+      plugins: [createTitanNodeCompatPlugin(options.root || process.cwd())],
       banner: { js: "var Titan = t;" },
       footer: options.footer || {}
     });
@@ -135,6 +147,7 @@ export async function bundle(options = {}) {
 
     try {
       await bundleFile({
+        root,
         entryPoint,
         outfile,
         footer: {

@@ -58,9 +58,30 @@ export async function updateCommand() {
         console.log(chalk.yellow(`  ⚠️ Failed to update package.json: ${e.message}`));
     }
 
-    // 2. Refresh Dockerfile and dotfiles from templates
-    const commonDir = path.resolve(__dirname, '..', '..', '..', '..', 'templates', 'common');
-    if (fs.existsSync(commonDir)) {
+    // 2. Migration: rename titan.json to tanfig.json if needed
+    const oldConfigPath = path.join(root, 'titan.json');
+    const newConfigPath = path.join(root, 'tanfig.json');
+    if (fs.existsSync(oldConfigPath) && !fs.existsSync(newConfigPath)) {
+        fs.renameSync(oldConfigPath, newConfigPath);
+        console.log(chalk.green(`  ✔ Migrated titan.json to tanfig.json`));
+    }
+
+    // 3. Refresh Dockerfile and dotfiles from templates
+    let commonDir = null;
+    const tryCommonPaths = [
+        path.resolve(__dirname, '..', '..', '..', '..', 'templates', 'common'), // Monorepo
+        path.resolve(__dirname, '..', '..', 'templates', 'common'), // NPM cli package
+        path.resolve(__dirname, '..', '..', '..', 'templates', 'common') // Fallback
+    ];
+
+    for (const p of tryCommonPaths) {
+        if (fs.existsSync(p)) {
+            commonDir = p;
+            break;
+        }
+    }
+
+    if (commonDir) {
         const filesToSync = [
             ['Dockerfile', 'Dockerfile'],
             ['_dockerignore', '.dockerignore'],
